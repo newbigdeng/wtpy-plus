@@ -114,9 +114,10 @@ class AppInfo(EventSink):
         if self._mq_url != old_mqurl:
             if self._evt_receiver is not None:
                 self._evt_receiver.release()
+                self._evt_receiver = None
 
             if self._mq_url != '':
-                self._evt_receiver = EventReceiver(url=self._mq_url, logger=self.__logger__)
+                self._evt_receiver = EventReceiver(url=self._mq_url, logger=self.__logger__, sink=self)
                 self._evt_receiver.run()
                 self.__logger__.info("应用%s开始接收%s的通知信息" % (self._id, self._mq_url))
 
@@ -498,7 +499,7 @@ class WatchDog:
 
         guard = 'true' if appConf["guard"] else 'false'
         redirect = 'true' if appConf["redirect"] else 'false'
-        schedule = 'true' if appConf["schedule"] else 'false'
+        schedule = 'true' if appConf["schedule"]["active"] else 'false'
 
         stype = 1 if isGroup else 0
 

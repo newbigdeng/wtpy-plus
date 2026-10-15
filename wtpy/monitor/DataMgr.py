@@ -863,7 +863,8 @@ class DataMgr:
             }
 
             trdCache["corders"].append(tItem)
-        
+
+        trdCache["lastrow"] = last_row + len(lines)
         return trdCache["corders"][-limit:]
 
     def get_channel_trades(self, grpid:str, chnlid:str, limit:int = 200):
@@ -918,7 +919,8 @@ class DataMgr:
             }
 
             trdCache["ctrades"].append(tItem)
-        
+
+        trdCache["lastrow"] = last_row + len(lines)
         return trdCache["ctrades"][-limit:]
 
     def get_channel_positions(self, grpid:str, chnlid:str):
