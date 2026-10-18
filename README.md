@@ -91,8 +91,10 @@ git clone -b wt-plus https://github.com/newbigdeng/WonderTrader-plus.git
 git clone -b py-plus https://github.com/newbigdeng/wtpy-plus.git
 docker build --build-arg BUILD_JOBS=2 \
   -t wondertrader-plus:native ./WonderTrader-plus
-cd wtpy-plus
-docker compose up -d --build
+docker build -t wtpy-plus:latest ./wtpy-plus
+docker run -d --name wt-plus-workbench --init \
+  -p 127.0.0.1:8100:8100 -v wt-plus-data:/data \
+  --stop-timeout 30 wtpy-plus:latest
 ```
 
 打开 `http://127.0.0.1:8100/console/`。
@@ -100,15 +102,29 @@ docker compose up -d --build
 初始密码只在数据卷文件中保存：
 
 ```bash
-docker compose exec workbench cat /data/admin-password.txt
+docker exec wt-plus-workbench cat /data/admin-password.txt
 ```
 
 也可预先挂载密码文件。
 用 `WT_ADMIN_PASSWORD_FILE` 指定文件路径。
 `WT_ADMIN_USER` 可设置首次用户名。
 这些设置只作用于空数据库。
-停止工作台使用 `docker compose down`。
-不加 `-v` 就会保留数据库和运行结果。
+停止使用 `docker stop wt-plus-workbench`。
+再次启动使用 `docker start wt-plus-workbench`。
+数据卷保留数据库和运行结果。
+已有工作台占用 `8100` 时，换一个宿主机端口。
+
+安装 Compose 插件后，也可从源码目录启动：
+
+```bash
+cd wtpy-plus
+docker compose up -d --build
+docker compose exec workbench cat /data/admin-password.txt
+```
+
+两种启动方式各自创建数据卷，请选择一种。
+Compose 停止使用 `docker compose down`。
+不加 `-v` 就会保留对应数据卷。
 
 在虚拟机上运行时，Windows 使用 SSH 转发：
 
@@ -170,9 +186,9 @@ admin 管理配置、用户，并可执行回测。
 | 配套 WT 仓库 | 引擎、执行器、模拟柜台和 NNG |
 
 ```bash
-docker compose exec -w /workspace/src/wtpy/console workbench npm ci
-docker compose exec -w /workspace/src/wtpy/console workbench npm run build
-docker compose exec -u 0 workbench sh -c \
+docker exec -w /workspace/src/wtpy/console wt-plus-workbench npm ci
+docker exec -w /workspace/src/wtpy/console wt-plus-workbench npm run build
+docker exec -u 0 wt-plus-workbench sh -c \
   'cp -a /workspace/src/wtpy/console/dist/. /opt/wt/static/console/'
 ```
 
