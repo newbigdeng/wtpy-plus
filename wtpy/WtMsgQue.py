@@ -64,6 +64,8 @@ class WtMsgQue:
 
     def add_mq_server(self, url:str, server:WtMQServer = None) -> WtMQServer:
         id = self._wrapper.create_server(url)
+        if not id:
+            raise RuntimeError(f"Could not create MQ server: {url}")
         if server is None:
             server = WtMQServer()
 
@@ -81,6 +83,8 @@ class WtMsgQue:
 
     def add_mq_client(self, url:str, client:WtMQClient = None) -> WtMQClient:
         id = self._wrapper.create_client(url, self._cb_msg)
+        if not id:
+            raise RuntimeError(f"Could not create MQ client: {url}")
         if client is None:
             client = WtMQClient()
         client.init(self._wrapper, id)
@@ -94,5 +98,3 @@ class WtMsgQue:
         
         self._wrapper.destroy_client(id)
         self._clients.pop(id)
-        
-        

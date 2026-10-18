@@ -178,7 +178,7 @@ class WtBtSnooper:
         else:
             import threading
             self.worker = threading.Thread(target=self.__server_impl__, args=(port,host,))
-            self.worker.setDaemon(True)
+            self.worker.daemon = True
             self.worker.start()
 
     def get_workspace_path(self, id:str) ->str:

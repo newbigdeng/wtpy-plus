@@ -298,28 +298,23 @@ class DataMgr:
 
     def add_group(self, grpInfo:dict):
         grpid = grpInfo["id"]
-        isNewGrp = not (grpid in self.__config__["groups"])
-
-        bSucc = False
+        previous = self.__config__["groups"].get(grpid)
+        values = tuple(grpInfo[key] for key in ("name", "path", "info", "gtype", "datmod", "env", "mqurl"))
         try:
             cur = self.__db_conn__.cursor()
-            sql = ''
-            if isNewGrp:
-                sql = "INSERT INTO groups(groupid,name,path,info,gtype,datmod,env,mqurl) VALUES('%s','%s','%s','%s','%s','%s','%s','%s');" \
-                    % (grpid, grpInfo["name"], grpInfo["path"], grpInfo["info"], grpInfo["gtype"], grpInfo["datmod"], grpInfo["env"], grpInfo["mqurl"])
+            if previous is None:
+                cur.execute("INSERT INTO groups(groupid,name,path,info,gtype,datmod,env,mqurl) VALUES(?,?,?,?,?,?,?,?)", (grpid,) + values)
             else:
-                sql = "UPDATE groups SET name='%s',path='%s',info='%s',gtype='%s',datmod='%s',env='%s',mqurl='%s',modifytime=datetime('now','localtime') WHERE groupid='%s';" \
-                    % (grpInfo["name"], grpInfo["path"], grpInfo["info"], grpInfo["gtype"], grpInfo["datmod"], grpInfo["env"], grpInfo["mqurl"], grpid)
-            cur.execute(sql)
+                cur.execute("UPDATE groups SET name=?,path=?,info=?,gtype=?,datmod=?,env=?,mqurl=?,modifytime=datetime('now','localtime') WHERE groupid=?", values + (grpid,))
             self.__db_conn__.commit()
-            bSucc = True
-        except sqlite3.Error as e:
-            print(e)
-
-        if bSucc:
-            self.__config__["groups"][grpid] = grpInfo
-
-        return bSucc
+        except sqlite3.Error as exc:
+            self.__db_conn__.rollback()
+            print(exc)
+            return False
+        if previous is not None and previous.get("path") != grpInfo["path"]:
+            self.__grp_cache__.pop(grpid, None)
+        self.__config__["groups"][grpid] = dict(grpInfo)
+        return True
 
     def del_group(self, grpid:str):
         if grpid in self.__config__["groups"]:
@@ -359,9 +354,12 @@ class DataMgr:
                 (usrInfo["name"], usrInfo["role"], usrInfo["iplist"], usrInfo["products"], usrInfo["remark"], admin, loginid))
         self.__db_conn__.commit()
 
-        if loginid in self.__config__["users"]:
-            self.__config__["users"][loginid]["modifyby"] = admin
-            self.__config__["users"][loginid]["modifytime"] = usrInfo["modifytime"]
+        cached = dict(self.__config__["users"].get(loginid, {}))
+        cached.update({key:value for key,value in usrInfo.items() if key != "passwd"})
+        if isNewUser:
+            cached["passwd"] = encpwd
+        cached["products"] = [x for x in cached.get("products", "").split(",") if x] if isinstance(cached.get("products"), str) else list(cached.get("products") or [])
+        self.__config__["users"][loginid] = cached
 
     def mod_user_pwd(self, loginid:str, newpwd:str, admin:str):
         cur = self.__db_conn__.cursor()
@@ -384,25 +382,13 @@ class DataMgr:
 
     def log_action(self, adminInfo, atype, remark):
         cur = self.__db_conn__.cursor()
-        sql = "INSERT INTO actions(loginid,actiontime,actionip,actiontype,remark) VALUES('%s',datetime('now','localtime'),'%s','%s','%s');" % (
-                adminInfo["loginid"], adminInfo["loginip"], atype, remark)
-        cur.execute(sql)
+        cur.execute("INSERT INTO actions(loginid,actiontime,actionip,actiontype,remark) VALUES(?,datetime('now','localtime'),?,?,?)",
+                    (adminInfo["loginid"], adminInfo["loginip"], atype, remark))
         self.__db_conn__.commit()
 
     def get_user(self, loginid:str):
         if loginid in self.__config__["users"]:
             return self.__config__["users"][loginid].copy()
-        elif loginid == 'superman':
-            return {
-                "loginid":loginid,
-                "name":"超管",
-                "role":"superman",
-                "passwd":"25ed305a56504e95fd1ca9900a1da174",
-                "iplist":"",
-                "remark":"内置超管账号",
-                'builtin':True,
-                'products':''
-            }
         else:
             return None
 

@@ -89,6 +89,7 @@ class AppInfo(EventSink):
         self._ticks = 0
         self._state = AppState.AS_NotRunning
         self._procid = None
+        self._process = None
         self._sink = sink
         self._mem = 0
 
@@ -100,6 +101,7 @@ class AppInfo(EventSink):
     def applyConf(self, appConf:dict):
         self._lock.acquire()
         self.__info__ = appConf
+        self._cmd_line = None
         self._check_span = appConf["span"]
         self._guard = appConf["guard"]
         old_mqurl = self._mq_url
@@ -141,6 +143,8 @@ class AppInfo(EventSink):
         if self._state == AppState.AS_Closed:
             return False
             
+        if self._process is not None and self._process.poll() is not None:
+            return False
         bNeedCheck = (self._procid is None) or (not psutil.pid_exists(self._procid))
         if bNeedCheck:
             for pid in pids:
@@ -193,11 +197,12 @@ class AppInfo(EventSink):
             args.insert(0, self.__info__["path"])
 
             if isWindows():
-                self._procid = subprocess.Popen(args,
-                                cwd=self.__info__["folder"], creationflags=subprocess.CREATE_NEW_CONSOLE).pid
+                self._process = subprocess.Popen(args,
+                                cwd=self.__info__["folder"], creationflags=subprocess.CREATE_NEW_CONSOLE)
             else:
-                self._procid = subprocess.Popen(args, 
-                                cwd=self.__info__["folder"]).pid
+                self._process = subprocess.Popen(args,
+                                cwd=self.__info__["folder"])
+            self._procid = self._process.pid
             
             self._cmd_line = (self.__info__["path"] + " " + self.__info__["param"]) if self.__info__["param"] != "" else self.__info__["path"]
             self.__logger__.info(f"cmdline: {self._cmd_line}, cwd:{self.__info__['folder']}")
@@ -219,9 +224,20 @@ class AppInfo(EventSink):
             if isWindows():
                 os.system("taskkill /f /pid " + str(self._procid))
             else:
-                os.system("kill -9 " + str(self._procid))
-        except SystemError as e:
-            self.__logger__.error("关闭异常: {}" % (e))
+                proc = psutil.Process(self._procid)
+                proc.terminate()
+                try:
+                    exit_code = self._process.wait(timeout=10) if self._process is not None else proc.wait(timeout=10)
+                    self.__logger__.info("应用%s已退出，退出码%s" % (self._id, exit_code))
+                except (psutil.TimeoutExpired, subprocess.TimeoutExpired):
+                    self.__logger__.warn("应用%s在10秒内未退出，强制结束" % self._id)
+                    proc.kill()
+                    if self._process is not None:
+                        self._process.wait(timeout=3)
+                    else:
+                        proc.wait(timeout=3)
+        except (SystemError, psutil.NoSuchProcess) as e:
+            self.__logger__.error("关闭异常: %s" % (e))
             pass
 
         self._state = AppState.AS_Closed
@@ -393,10 +409,27 @@ class WatchDog:
         while not self.__stopped__:
             time.sleep(1)
             pids = psutil.pids()
-            for appid in self.__apps__:
-                appInfo = self.__apps__[appid]
+            for appid in list(self.__apps__):
+                appInfo = self.__apps__.get(appid)
+                if appInfo is None:
+                    continue
 
                 appInfo.tick(pids)
+
+    def shutdown(self, stop_apps=False):
+        # Join the scheduler before stopping apps so guard mode cannot restart them.
+        self.__stopped__ = True
+        if self.__worker__ is not None:
+            self.__worker__.join()
+            self.__worker__ = None
+        pids = psutil.pids()
+        for app in self.__apps__.values():
+            if stop_apps:
+                app.update_state(pids)
+                app.stop()
+            if app._evt_receiver is not None:
+                app._evt_receiver.release()
+                app._evt_receiver = None
 
     def get_apps(self):
         ret = {}

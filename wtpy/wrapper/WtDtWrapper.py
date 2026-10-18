@@ -27,11 +27,17 @@ class WtDtWrapper:
         self.api.get_version.restype = c_char_p
         self.ver = bytes.decode(self.api.get_version())
 
+        self.api.release_datakit.argtypes = []
+        self.api.release_datakit.restype = None
+
         self.api.create_ext_parser.restype = c_bool
         self.api.create_ext_parser.argtypes = [c_char_p]
 
         self.api.create_ext_dumper.restype = c_bool
         self.api.create_ext_dumper.argtypes = [c_char_p]
+
+    def release(self):
+        self.api.release_datakit()
 
     def run_datakit(self, bAsync:bool = False):
         '''

@@ -1,0 +1,14 @@
+[
+  {
+    "id": "my-historical-ticks",
+    "label": "示例：请替换合约、时间及Tick数量",
+    "code": "SHFE.rb.2701",
+    "start": 202610130900,
+    "end": 202610131500,
+    "ticks": 1,
+    "source": "recorded",
+    "kind": "dsb",
+    "file": "/data/storage/bin/ticks/SHFE.rb.2701_tick_20261013.dsb",
+    "basefiles": "/data/basefiles"
+  }
+]

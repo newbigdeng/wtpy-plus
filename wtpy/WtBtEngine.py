@@ -15,6 +15,7 @@ from .ContractMgr import ContractMgr, ContractInfo
 from .CodeHelper import CodeHelper
 
 import json
+import datetime
 import yaml
 import chardet
 import os
@@ -285,6 +286,14 @@ class WtBtEngine:
         if self.__cfg_commited__:
             return
 
+        replay = self.__config__["replayer"]
+        for name in ("stime", "etime"):
+            value = int(replay[name])
+            datetime.datetime.strptime(str(value), "%Y%m%d%H%M")
+            if not 199001010000 <= value <= 203212312359:
+                raise ValueError("Backtest bar time supports 1990 through 2032")
+        if int(replay["stime"]) > int(replay["etime"]):
+            raise ValueError("Backtest start time must not exceed end time")
         cfgfile = json.dumps(self.__config__, indent=4, sort_keys=True)
         self.__wrapper__.config_backtest(cfgfile, False)
         self.__cfg_commited__ = True
@@ -427,7 +436,16 @@ class WtBtEngine:
         if not self.__cfg_commited__:   #如果配置没有提交,则自动提交一下
             self.commitBTConfig()
 
+        self.__wrapper__.callback_error = None
         self.__wrapper__.run_backtest(bNeedDump = bNeedDump, bAsync = bAsync)
+        if not bAsync:
+            self.raise_callback_error()
+
+    def raise_callback_error(self):
+        """Surface exceptions caught at the ctypes boundary; async callers poll this."""
+        error = self.__wrapper__.callback_error
+        if error is not None:
+            raise RuntimeError("Backtest strategy callback failed") from error
 
     def cta_step(self, remark:str = "") -> bool:
         '''

@@ -1689,7 +1689,7 @@ class WtBtAnalyst:
             annual_days = sInfo["atd"]
             rf = sInfo["rf"]
             
-            filename = folder + 'summary.json'
+            filename = os.path.join(folder, 'summary.json')
             sumObj = summary_analyze(df_funds, capital=init_capital, rf=rf, period=annual_days)
             sumObj["name"] = sname
             f = open(filename,"w")

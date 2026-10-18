@@ -27,3 +27,20 @@ ParserCTPFlow
 *.con
 *.dmb
 *.dsb
+
+# Plus source build and private runtime
+/docs/
+/console/node_modules/
+/console/dist/
+/console/test-results/
+/console/playwright-report/
+/data/
+/run/
+.env
+*.local.json
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.pyc
+/wtpy/wrapper/linux/*.so

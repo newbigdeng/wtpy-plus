@@ -1,0 +1,730 @@
+[
+  {
+    "type": "cta",
+    "name": "stra_log_text",
+    "signature": "stra_log_text(message: str, level: int=1)",
+    "description": "输出日志\n@level      日志级别, 0-debug, 1-info, 2-warn, 3-error\n@message    消息内容, 最大242字符",
+    "source": "wtpy/CtaContext.py",
+    "line": 170
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_tdate",
+    "signature": "stra_get_tdate() -> int",
+    "description": "获取当前交易日\n@return int, 格式如20180513",
+    "source": "wtpy/CtaContext.py",
+    "line": 178
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_date",
+    "signature": "stra_get_date() -> int",
+    "description": "获取当前日期\n@return int, 格式如20180513",
+    "source": "wtpy/CtaContext.py",
+    "line": 185
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_position_avgpx",
+    "signature": "stra_get_position_avgpx(stdCode: str='') -> float",
+    "description": "获取当前持仓均价\n@stdCode   合约代码\n@return 持仓均价",
+    "source": "wtpy/CtaContext.py",
+    "line": 192
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_position_profit",
+    "signature": "stra_get_position_profit(stdCode: str='') -> float",
+    "description": "获取持仓浮动盈亏\n@stdCode   合约代码, 为None时读取全部品种的浮动盈亏\n@return 浮动盈亏",
+    "source": "wtpy/CtaContext.py",
+    "line": 200
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_fund_data",
+    "signature": "stra_get_fund_data(flag: int=0) -> float",
+    "description": "获取资金数据\n@flag   0-动态权益, 1-总平仓盈亏, 2-总浮动盈亏, 3-总手续费\n@return 资金数据",
+    "source": "wtpy/CtaContext.py",
+    "line": 208
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_time",
+    "signature": "stra_get_time() -> int",
+    "description": "获取当前时间, 24小时制, 精确到分\n@return int, 格式如1231",
+    "source": "wtpy/CtaContext.py",
+    "line": 216
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_price",
+    "signature": "stra_get_price(stdCode: str) -> float",
+    "description": "获取最新价格, 一般在获取了K线以后再获取该价格\n@return 最新价格",
+    "source": "wtpy/CtaContext.py",
+    "line": 223
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_day_price",
+    "signature": "stra_get_day_price(stdCode: str, flag: int=0) -> float",
+    "description": "获取当日价格\n@flag       价格标记, 0-开盘价, 1-最高价, 2-最低价, 3-最新价\n@return 最新价格",
+    "source": "wtpy/CtaContext.py",
+    "line": 230
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_all_position",
+    "signature": "stra_get_all_position() -> dict",
+    "description": "获取全部持仓",
+    "source": "wtpy/CtaContext.py",
+    "line": 238
+  },
+  {
+    "type": "cta",
+    "name": "stra_prepare_bars",
+    "signature": "stra_prepare_bars(stdCode: str, period: str, count: int, isMain: bool=False)",
+    "description": "准备历史K线\n一般在on_init调用\n@stdCode   合约代码\n@period K线周期, 如m3/d7\n@count  要拉取的K线条数\n@isMain 是否是主K线",
+    "source": "wtpy/CtaContext.py",
+    "line": 246
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_bars",
+    "signature": "stra_get_bars(stdCode: str, period: str, count: int, isMain: bool=False) -> WtNpKline",
+    "description": "获取历史K线\n@stdCode   合约代码\n@period K线周期, 如m3/d7\n@count  要拉取的K线条数\n@isMain 是否是主K线",
+    "source": "wtpy/CtaContext.py",
+    "line": 262
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_ticks",
+    "signature": "stra_get_ticks(stdCode: str, count: int) -> WtNpTicks",
+    "description": "获取tick数据\n@stdCode   合约代码\n@count  要拉取的tick数量",
+    "source": "wtpy/CtaContext.py",
+    "line": 280
+  },
+  {
+    "type": "cta",
+    "name": "stra_sub_ticks",
+    "signature": "stra_sub_ticks(stdCode: str)",
+    "description": "订阅实时行情\n获取K线和tick数据的时候会自动订阅, 这里只需要订阅额外要检测的品种即可\n@stdCode   合约代码",
+    "source": "wtpy/CtaContext.py",
+    "line": 293
+  },
+  {
+    "type": "cta",
+    "name": "stra_sub_bar_events",
+    "signature": "stra_sub_bar_events(stdCode: str, perriod: str)",
+    "description": "订阅K线事件, 订阅以后on_bar会触发, 一般在on_init调用\n@stdCode    合约代码\n@period     K线周期, 如m3/d7",
+    "source": "wtpy/CtaContext.py",
+    "line": 301
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_position",
+    "signature": "stra_get_position(stdCode: str, bonlyvalid: bool=False, usertag: str='') -> float",
+    "description": "读取当前仓位\n@stdCode       合约/股票代码\n@bonlyvalid 只读可用持仓, 默认为False\n@usertag    入场标记\n@return     正为多仓, 负为空仓",
+    "source": "wtpy/CtaContext.py",
+    "line": 309
+  },
+  {
+    "type": "cta",
+    "name": "stra_set_position",
+    "signature": "stra_set_position(stdCode: str, qty: float, usertag: str='', limitprice: float=0.0, stopprice: float=0.0)",
+    "description": "设置仓位\n@stdCode   合约/股票代码\n@qty    目标仓位, 正为多仓, 负为空仓\n@return 设置结果TRUE/FALSE",
+    "source": "wtpy/CtaContext.py",
+    "line": 319
+  },
+  {
+    "type": "cta",
+    "name": "stra_enter_long",
+    "signature": "stra_enter_long(stdCode: str, qty: float, usertag: str='', limitprice: float=0.0, stopprice: float=0.0)",
+    "description": "多仓进场, 如果有空仓, 则平空再开多\n@stdCode   品种代码\n@qty    数量\n@limitprice 限价, 默认为0\n@stopprice  止价, 默认为0",
+    "source": "wtpy/CtaContext.py",
+    "line": 329
+  },
+  {
+    "type": "cta",
+    "name": "stra_exit_long",
+    "signature": "stra_exit_long(stdCode: str, qty: float, usertag: str='', limitprice: float=0.0, stopprice: float=0.0)",
+    "description": "多仓出场, 如果剩余多仓不够, 则全部平掉即可\n@stdCode   品种代码\n@qty    数量\n@limitprice 限价, 默认为0\n@stopprice  止价, 默认为0",
+    "source": "wtpy/CtaContext.py",
+    "line": 339
+  },
+  {
+    "type": "cta",
+    "name": "stra_enter_short",
+    "signature": "stra_enter_short(stdCode: str, qty: float, usertag: str='', limitprice: float=0.0, stopprice: float=0.0)",
+    "description": "空仓进场, 如果有多仓, 则平多再开空\n@stdCode   品种代码\n@qty    数量\n@limitprice 限价, 默认为0\n@stopprice  止价, 默认为0",
+    "source": "wtpy/CtaContext.py",
+    "line": 349
+  },
+  {
+    "type": "cta",
+    "name": "stra_exit_short",
+    "signature": "stra_exit_short(stdCode: str, qty: float, usertag: str='', limitprice: float=0.0, stopprice: float=0.0)",
+    "description": "空仓出场, 如果剩余空仓不够, 则全部平掉即可\n@stdCode   品种代码\n@qty    数量\n@limitprice 限价, 默认为0\n@stopprice  止价, 默认为0",
+    "source": "wtpy/CtaContext.py",
+    "line": 359
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_last_entrytime",
+    "signature": "stra_get_last_entrytime(stdCode: str) -> int",
+    "description": "获取当前持仓最后一次进场时间\n@stdCode   品种代码\n@return 返回最后一次开仓的时间, 格式如201903121047",
+    "source": "wtpy/CtaContext.py",
+    "line": 369
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_last_entrytag",
+    "signature": "stra_get_last_entrytag(stdCode: str) -> str",
+    "description": "获取当前持仓最后一次进场标记\n@stdCode    品种代码\n@return     返回最后一次开仓标记",
+    "source": "wtpy/CtaContext.py",
+    "line": 377
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_last_exittime",
+    "signature": "stra_get_last_exittime(stdCode: str) -> int",
+    "description": "获取当前持仓最后一次出场时间\n@stdCode   品种代码\n@return 返回最后一次开仓的时间, 格式如201903121047",
+    "source": "wtpy/CtaContext.py",
+    "line": 385
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_first_entrytime",
+    "signature": "stra_get_first_entrytime(stdCode: str) -> int",
+    "description": "获取当前持仓第一次进场时间\n@stdCode   品种代码\n@return 返回最后一次开仓的时间, 格式如201903121047",
+    "source": "wtpy/CtaContext.py",
+    "line": 393
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_detail_profit",
+    "signature": "stra_get_detail_profit(stdCode: str, usertag: str, flag: int=0) -> float",
+    "description": "获取指定标记的持仓的盈亏\n@stdCode       合约代码\n@usertag    进场标记\n@flag       盈亏记号, 0-浮动盈亏, 1-最大浮盈, -1-最大亏损（负数）, 2-最高浮动价格, -2-最低浮动价格\n@return     盈亏 ",
+    "source": "wtpy/CtaContext.py",
+    "line": 423
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_detail_cost",
+    "signature": "stra_get_detail_cost(stdCode: str, usertag: str) -> float",
+    "description": "获取指定标记的持仓的开仓价\n@stdCode       合约代码\n@usertag    进场标记\n@return     开仓价 ",
+    "source": "wtpy/CtaContext.py",
+    "line": 433
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_detail_entertime",
+    "signature": "stra_get_detail_entertime(stdCode: str, usertag: str) -> int",
+    "description": "获取指定标记的持仓的进场时间\n@stdCode       合约代码\n@usertag    进场标记\n@return     进场时间, 格式如201907260932 ",
+    "source": "wtpy/CtaContext.py",
+    "line": 442
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_all_codes",
+    "signature": "stra_get_all_codes() -> list",
+    "description": "获取全部合约代码列表",
+    "source": "wtpy/CtaContext.py",
+    "line": 451
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_codes_by_product",
+    "signature": "stra_get_codes_by_product(stdPID: str) -> list",
+    "description": "根据品种代码读取合约列表\n@stdPID 品种代码，格式如SHFE.rb",
+    "source": "wtpy/CtaContext.py",
+    "line": 459
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_codes_by_underlying",
+    "signature": "stra_get_codes_by_underlying(underlying: str) -> list",
+    "description": "根据underlying读取合约列表\n@underlying 格式如CFFEX.IM2304",
+    "source": "wtpy/CtaContext.py",
+    "line": 468
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_comminfo",
+    "signature": "stra_get_comminfo(stdCode: str) -> ProductInfo",
+    "description": "获取品种详情\n@stdCode   合约代码如SHFE.ag.HOT, 或者品种代码如SHFE.ag\n@return 品种信息, 结构请参考ProductMgr中的ProductInfo",
+    "source": "wtpy/CtaContext.py",
+    "line": 477
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_contract",
+    "signature": "stra_get_contract(stdCode: str) -> ContractInfo",
+    "description": "获取合约详情，回测框架下支持不够完善，慎用！\n@stdCode   合约代码如SHFE.ag.2302\n@return 品种信息, 结构请参考ContractMgr中的ContractInfo",
+    "source": "wtpy/CtaContext.py",
+    "line": 487
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_rawcode",
+    "signature": "stra_get_rawcode(stdCode: str)",
+    "description": "获取分月合约代码\n@stdCode   连续合约代码如SHFE.ag.HOT\n@return 品种信息,结构请参考ProductMgr中的ProductInfo",
+    "source": "wtpy/CtaContext.py",
+    "line": 497
+  },
+  {
+    "type": "cta",
+    "name": "stra_get_sessinfo",
+    "signature": "stra_get_sessinfo(stdCode: str) -> SessionInfo",
+    "description": "获取交易时段详情\n@stdCode   合约代码如SHFE.ag.HOT, 或者品种代码如SHFE.ag\n@return 品种信息, 结构请参考SessionMgr中的SessionInfo",
+    "source": "wtpy/CtaContext.py",
+    "line": 507
+  },
+  {
+    "type": "hft",
+    "name": "stra_log_text",
+    "signature": "stra_log_text(message: str, level: int=1)",
+    "description": "输出日志\n@level      日志级别，0-debug，1-info，2-warn，3-error\n@message    消息内容，最大242字符",
+    "source": "wtpy/HftContext.py",
+    "line": 132
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_date",
+    "signature": "stra_get_date()",
+    "description": "获取当前日期\n@return int,格式如20180513",
+    "source": "wtpy/HftContext.py",
+    "line": 140
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_time",
+    "signature": "stra_get_time()",
+    "description": "获取当前时间,24小时制,精确到分\n@return int,格式如1231",
+    "source": "wtpy/HftContext.py",
+    "line": 147
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_secs",
+    "signature": "stra_get_secs()",
+    "description": "获取当前秒数,精确到毫秒\n@return int,格式如1231",
+    "source": "wtpy/HftContext.py",
+    "line": 154
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_price",
+    "signature": "stra_get_price(stdCode)",
+    "description": "获取最新价格,一般在获取了K线以后再获取该价格\n@return 最新价格",
+    "source": "wtpy/HftContext.py",
+    "line": 161
+  },
+  {
+    "type": "hft",
+    "name": "stra_prepare_bars",
+    "signature": "stra_prepare_bars(stdCode: str, period: str, count: int)",
+    "description": "准备历史K线\n一般在on_init调用\n@stdCode   合约代码\n@period K线周期, 如m3/d7\n@count  要拉取的K线条数\n@isMain 是否是主K线",
+    "source": "wtpy/HftContext.py",
+    "line": 168
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_bars",
+    "signature": "stra_get_bars(stdCode: str, period: str, count: int) -> WtNpKline",
+    "description": "获取历史K线\n@stdCode   合约代码\n@period K线周期,如m3/d7\n@count  要拉取的K线条数\n@isMain 是否是主K线",
+    "source": "wtpy/HftContext.py",
+    "line": 180
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_ticks",
+    "signature": "stra_get_ticks(stdCode: str, count: int) -> WtNpTicks",
+    "description": "获取tick数据\n@stdCode   合约代码\n@count  要拉取的tick数量",
+    "source": "wtpy/HftContext.py",
+    "line": 196
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_order_queue",
+    "signature": "stra_get_order_queue(stdCode: str, count: int) -> WtNpOrdQueues",
+    "description": "获取委托队列数据\n@stdCode   合约代码\n@count  要拉取的tick数量",
+    "source": "wtpy/HftContext.py",
+    "line": 208
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_order_detail",
+    "signature": "stra_get_order_detail(stdCode: str, count: int) -> WtNpOrdDetails",
+    "description": "获取逐笔委托数据\n@stdCode   合约代码\n@count  要拉取的tick数量",
+    "source": "wtpy/HftContext.py",
+    "line": 220
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_transaction",
+    "signature": "stra_get_transaction(stdCode: str, count: int) -> WtNpTransactions",
+    "description": "获取逐笔成交数据\n@stdCode   合约代码\n@count  要拉取的tick数量",
+    "source": "wtpy/HftContext.py",
+    "line": 236
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_position",
+    "signature": "stra_get_position(stdCode: str, bonlyvalid: bool=False)",
+    "description": "读取当前仓位\n@stdCode    合约/股票代码\n@return     正为多仓,负为空仓",
+    "source": "wtpy/HftContext.py",
+    "line": 248
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_position_profit",
+    "signature": "stra_get_position_profit(stdCode: str='')",
+    "description": "读取指定持仓的浮动盈亏\n@stdCode    合约/股票代码\n@return     指定持仓的浮动盈亏",
+    "source": "wtpy/HftContext.py",
+    "line": 256
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_position_avgpx",
+    "signature": "stra_get_position_avgpx(stdCode: str='')",
+    "description": "读取指定持仓的持仓均价\n@stdCode    合约/股票代码\n@return     指定持仓的浮动盈亏",
+    "source": "wtpy/HftContext.py",
+    "line": 264
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_undone",
+    "signature": "stra_get_undone(stdCode: str)",
+    "description": "请参考对应 Context 源码实现。",
+    "source": "wtpy/HftContext.py",
+    "line": 272
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_rawcode",
+    "signature": "stra_get_rawcode(stdCode: str)",
+    "description": "获取分月合约代码\n@stdCode   连续合约代码如SHFE.ag.HOT\n@return 品种信息,结构请参考ProductMgr中的ProductInfo",
+    "source": "wtpy/HftContext.py",
+    "line": 297
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_comminfo",
+    "signature": "stra_get_comminfo(stdCode: str)",
+    "description": "获取品种详情\n@stdCode   合约代码如SHFE.ag.HOT,或者品种代码如SHFE.ag\n@return 品种信息,结构请参考ProductMgr中的ProductInfo",
+    "source": "wtpy/HftContext.py",
+    "line": 307
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_sessinfo",
+    "signature": "stra_get_sessinfo(stdCode: str) -> SessionInfo",
+    "description": "获取交易时段详情\n@stdCode   合约代码如SHFE.ag.HOT，或者品种代码如SHFE.ag\n@return 品种信息，结构请参考SessionMgr中的SessionInfo",
+    "source": "wtpy/HftContext.py",
+    "line": 317
+  },
+  {
+    "type": "hft",
+    "name": "stra_sub_ticks",
+    "signature": "stra_sub_ticks(stdCode: str)",
+    "description": "订阅实时行情数据\n获取K线和tick数据的时候会自动订阅，这里只需要订阅额外要检测的品种即可\n@stdCode   品种代码",
+    "source": "wtpy/HftContext.py",
+    "line": 327
+  },
+  {
+    "type": "hft",
+    "name": "stra_cancel",
+    "signature": "stra_cancel(localid: int)",
+    "description": "撤销指定订单\n@id         策略ID\n@localid    下单时返回的本地订单号",
+    "source": "wtpy/HftContext.py",
+    "line": 335
+  },
+  {
+    "type": "hft",
+    "name": "stra_cancel_all",
+    "signature": "stra_cancel_all(stdCode: str, isBuy: bool)",
+    "description": "撤销指定品种的全部买入订单or卖出订单\n@id         策略ID\n@stdCode    品种代码\n@isBuy      买入or卖出",
+    "source": "wtpy/HftContext.py",
+    "line": 343
+  },
+  {
+    "type": "hft",
+    "name": "stra_buy",
+    "signature": "stra_buy(stdCode: str, price: float, qty: float, userTag: str='', flag: int=0)",
+    "description": "买入指令\n@id         策略ID\n@stdCode    品种代码\n@price      买入价格, 0为市价\n@qty        买入数量\n@flag       下单标志, 0-normal, 1-fak, 2-fok",
+    "source": "wtpy/HftContext.py",
+    "line": 360
+  },
+  {
+    "type": "hft",
+    "name": "stra_sell",
+    "signature": "stra_sell(stdCode: str, price: float, qty: float, userTag: str='', flag: int=0)",
+    "description": "卖出指令\n@id         策略ID\n@stdCode    品种代码\n@price      卖出价格, 0为市价\n@qty        卖出数量\n@flag       下单标志, 0-normal, 1-fak, 2-fok",
+    "source": "wtpy/HftContext.py",
+    "line": 379
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_all_codes",
+    "signature": "stra_get_all_codes() -> list",
+    "description": "获取全部合约代码列表",
+    "source": "wtpy/HftContext.py",
+    "line": 398
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_codes_by_product",
+    "signature": "stra_get_codes_by_product(stdPID: str) -> list",
+    "description": "根据品种代码读取合约列表\n@stdPID 品种代码，格式如SHFE.rb",
+    "source": "wtpy/HftContext.py",
+    "line": 406
+  },
+  {
+    "type": "hft",
+    "name": "stra_get_codes_by_underlying",
+    "signature": "stra_get_codes_by_underlying(underlying: str) -> list",
+    "description": "根据underlying读取合约列表\n@underlying 格式如CFFEX.IM2304",
+    "source": "wtpy/HftContext.py",
+    "line": 415
+  },
+  {
+    "type": "sel",
+    "name": "stra_log_text",
+    "signature": "stra_log_text(message: str, level: int=1)",
+    "description": "输出日志\n@level      日志级别，0-debug，1-info，2-warn，3-error\n@message    消息内容，最大242字符",
+    "source": "wtpy/SelContext.py",
+    "line": 146
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_tdate",
+    "signature": "stra_get_tdate() -> int",
+    "description": "获取当前交易日\n@return int, 格式如20180513",
+    "source": "wtpy/SelContext.py",
+    "line": 154
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_date",
+    "signature": "stra_get_date()",
+    "description": "获取当前日期\n@return int，格式如20180513",
+    "source": "wtpy/SelContext.py",
+    "line": 161
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_position_avgpx",
+    "signature": "stra_get_position_avgpx(stdCode: str='') -> float",
+    "description": "获取当前持仓均价\n@stdCode   合约代码\n@return 持仓均价",
+    "source": "wtpy/SelContext.py",
+    "line": 168
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_position_profit",
+    "signature": "stra_get_position_profit(stdCode: str='') -> float",
+    "description": "获取持仓浮动盈亏\n@stdCode   合约代码, 为None时读取全部品种的浮动盈亏\n@return 浮动盈亏",
+    "source": "wtpy/SelContext.py",
+    "line": 176
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_fund_data",
+    "signature": "stra_get_fund_data(flag: int=0) -> float",
+    "description": "获取资金数据\n@flag   0-动态权益, 1-总平仓盈亏, 2-总浮动盈亏, 3-总手续费\n@return 资金数据",
+    "source": "wtpy/SelContext.py",
+    "line": 184
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_time",
+    "signature": "stra_get_time()",
+    "description": "获取当前时间，24小时制，精确到分\n@return int，格式如1231",
+    "source": "wtpy/SelContext.py",
+    "line": 192
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_price",
+    "signature": "stra_get_price(stdCode)",
+    "description": "获取最新价格，一般在获取了K线以后再获取该价格\n@return 最新价格",
+    "source": "wtpy/SelContext.py",
+    "line": 199
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_day_price",
+    "signature": "stra_get_day_price(stdCode: str, flag: int=0) -> float",
+    "description": "获取当日价格\n@flag       价格标记, 0-开盘价, 1-最高价, 2-最低价, 3-最新价\n@return 最新价格",
+    "source": "wtpy/SelContext.py",
+    "line": 206
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_all_position",
+    "signature": "stra_get_all_position()",
+    "description": "获取全部持仓",
+    "source": "wtpy/SelContext.py",
+    "line": 214
+  },
+  {
+    "type": "sel",
+    "name": "stra_prepare_bars",
+    "signature": "stra_prepare_bars(stdCode: str, period: str, count: int)",
+    "description": "准备历史K线\n一般在on_init调用\n@stdCode   合约代码\n@period K线周期, 如m3/d7\n@count  要拉取的K线条数\n@isMain 是否是主K线",
+    "source": "wtpy/SelContext.py",
+    "line": 222
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_bars",
+    "signature": "stra_get_bars(stdCode: str, period: str, count: int) -> WtNpKline",
+    "description": "获取历史K线\n@stdCode   合约代码\n@period K线周期, 如m3/d7\n@count  要拉取的K线条数\n@isMain 是否是主K线",
+    "source": "wtpy/SelContext.py",
+    "line": 234
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_ticks",
+    "signature": "stra_get_ticks(stdCode: str, count: int) -> WtNpTicks",
+    "description": "获取tick数据\n@stdCode   合约代码\n@count  要拉取的tick数量",
+    "source": "wtpy/SelContext.py",
+    "line": 253
+  },
+  {
+    "type": "sel",
+    "name": "stra_sub_ticks",
+    "signature": "stra_sub_ticks(stdCode: str)",
+    "description": "订阅实时行情\n@stdCode   合约代码",
+    "source": "wtpy/SelContext.py",
+    "line": 268
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_position",
+    "signature": "stra_get_position(stdCode: str, bonlyvalid: bool=False, usertag: str='') -> float",
+    "description": "读取当前仓位\n@stdCode       合约/股票代码\n@usertag    入场标记\n@return     正为多仓，负为空仓",
+    "source": "wtpy/SelContext.py",
+    "line": 275
+  },
+  {
+    "type": "sel",
+    "name": "stra_set_position",
+    "signature": "stra_set_position(stdCode: str, qty: float, usertag: str='')",
+    "description": "设置仓位\n@stdCode   合约/股票代码\n@qty    目标仓位，正为多仓，负为空仓\n@return 设置结果TRUE/FALSE",
+    "source": "wtpy/SelContext.py",
+    "line": 284
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_last_entrytime",
+    "signature": "stra_get_last_entrytime(stdCode: str) -> int",
+    "description": "获取当前持仓最后一次进场时间\n@stdCode   品种代码\n@return 返回最后一次开仓的时间, 格式如201903121047",
+    "source": "wtpy/SelContext.py",
+    "line": 293
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_last_entrytag",
+    "signature": "stra_get_last_entrytag(stdCode: str) -> str",
+    "description": "获取当前持仓最后一次进场标记\n@stdCode    品种代码\n@return     返回最后一次开仓标记",
+    "source": "wtpy/SelContext.py",
+    "line": 301
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_last_exittime",
+    "signature": "stra_get_last_exittime(stdCode: str) -> int",
+    "description": "获取当前持仓最后一次出场时间\n@stdCode   品种代码\n@return 返回最后一次开仓的时间, 格式如201903121047",
+    "source": "wtpy/SelContext.py",
+    "line": 309
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_first_entrytime",
+    "signature": "stra_get_first_entrytime(stdCode: str) -> int",
+    "description": "获取当前持仓第一次进场时间\n@stdCode   品种代码\n@return 返回最后一次开仓的时间, 格式如201903121047",
+    "source": "wtpy/SelContext.py",
+    "line": 317
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_detail_profit",
+    "signature": "stra_get_detail_profit(stdCode: str, usertag: str, flag: int=0) -> float",
+    "description": "获取指定标记的持仓的盈亏\n@stdCode       合约代码\n@usertag    进场标记\n@flag       盈亏记号, 0-浮动盈亏, 1-最大浮盈, -1-最大亏损（负数）, 2-最高浮动价格, -2-最低浮动价格\n@return     盈亏 ",
+    "source": "wtpy/SelContext.py",
+    "line": 346
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_detail_cost",
+    "signature": "stra_get_detail_cost(stdCode: str, usertag: str) -> float",
+    "description": "获取指定标记的持仓的开仓价\n@stdCode       合约代码\n@usertag    进场标记\n@return     开仓价 ",
+    "source": "wtpy/SelContext.py",
+    "line": 356
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_detail_entertime",
+    "signature": "stra_get_detail_entertime(stdCode: str, usertag: str) -> int",
+    "description": "获取指定标记的持仓的进场时间\n@stdCode       合约代码\n@usertag    进场标记\n@return     进场时间, 格式如201907260932 ",
+    "source": "wtpy/SelContext.py",
+    "line": 365
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_comminfo",
+    "signature": "stra_get_comminfo(stdCode: str)",
+    "description": "获取品种详情\n@stdCode   合约代码如SHFE.ag.HOT，或者品种代码如SHFE.ag\n@return 品种信息，结构请参考ProductMgr中的ProductInfo",
+    "source": "wtpy/SelContext.py",
+    "line": 374
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_rawcode",
+    "signature": "stra_get_rawcode(stdCode: str)",
+    "description": "获取分月合约代码\n@stdCode   连续合约代码如SHFE.ag.HOT\n@return 品种信息,结构请参考ProductMgr中的ProductInfo",
+    "source": "wtpy/SelContext.py",
+    "line": 384
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_sessioninfo",
+    "signature": "stra_get_sessioninfo(stdCode: str)",
+    "description": "获取品种详情\n@stdCode   合约代码如SHFE.ag.HOT，或者品种代码如SHFE.ag\n@return 品种信息，结构请参考ProductMgr中的ProductInfo",
+    "source": "wtpy/SelContext.py",
+    "line": 394
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_contract",
+    "signature": "stra_get_contract(stdCode: str)",
+    "description": "获取品种详情\n@stdCode   合约代码如SHFE.ag.HOT，或者品种代码如SHFE.ag\n@return 品种信息，结构请参考ProductMgr中的ProductInfo",
+    "source": "wtpy/SelContext.py",
+    "line": 404
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_all_codes",
+    "signature": "stra_get_all_codes() -> list",
+    "description": "获取全部合约代码列表",
+    "source": "wtpy/SelContext.py",
+    "line": 414
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_codes_by_product",
+    "signature": "stra_get_codes_by_product(stdPID: str) -> list",
+    "description": "根据品种代码读取合约列表\n@stdPID 品种代码，格式如SHFE.rb",
+    "source": "wtpy/SelContext.py",
+    "line": 422
+  },
+  {
+    "type": "sel",
+    "name": "stra_get_codes_by_underlying",
+    "signature": "stra_get_codes_by_underlying(underlying: str) -> list",
+    "description": "根据underlying读取合约列表\n@underlying 格式如CFFEX.IM2304",
+    "source": "wtpy/SelContext.py",
+    "line": 431
+  }
+]

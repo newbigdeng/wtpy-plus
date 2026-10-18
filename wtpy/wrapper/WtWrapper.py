@@ -31,6 +31,8 @@ class WtWrapper:
         dllname = ph.getModule("WtPorter")
         a = (paths[:-1] + (dllname,))
         _path = os.path.join(*a)
+        if os.environ.get("WT_PLUS_NATIVE_DIR"):
+            _path = os.path.join(os.path.realpath(os.environ["WT_PLUS_NATIVE_DIR"]), os.path.basename(dllname))
         self.api = cdll.LoadLibrary(_path)
         
         self.api.get_version.restype = c_char_p
@@ -396,6 +398,15 @@ class WtWrapper:
 
     def release(self):
         self.api.release_porter()
+
+    def query_trade_account(self, trader: str = "") -> bool:
+        """Request the connected adapter's normal asynchronous account query."""
+        query = getattr(self.api, "query_trade_account", None)
+        if query is None:
+            raise RuntimeError("The loaded WtPorter does not support account refresh")
+        query.argtypes = [c_char_p]
+        query.restype = c_bool
+        return bool(query(trader.encode("utf-8")))
 
     def config(self, cfgfile:str = 'config.yaml', isFile:bool = True):
         self.api.config_porter(bytes(cfgfile, encoding = "utf8"), isFile)

@@ -1,0 +1,5 @@
+{
+  "basefiles": "/data/basefiles",
+  "storage": "/data/storage",
+  "storage_mode": "bin"
+}

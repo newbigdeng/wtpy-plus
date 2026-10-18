@@ -1,0 +1,16 @@
+@import url('./workspace.css');
+html,body,#app{height:100%;width:100%;margin:0;color:#303133}
+.el-table{--el-table-cell-padding:4px 0}
+.el-header{padding:0 12px}.el-aside{overflow:auto}
+.el-tabs{min-height:0}.el-tabs__content{height:calc(100% - 42px)}
+.el-dialog__body{padding-top:8px}.el-menu-item{min-width:0}
+.el-button [class^=el-icon-]{margin-right:4px}.el-input__inner{min-width:0}
+/* These legacy tooltips contain explanatory text only. A focused checkbox can
+   keep its hint open; the hint must not cover the next group or action. */
+.wt-explanation-tooltip{pointer-events:none}
+.data-toolbar{height:auto!important;min-height:40px;overflow:visible!important}
+.data-toolbar>div{height:auto!important;min-height:40px;flex-wrap:wrap;column-gap:8px}
+.data-tools{flex:1 0 auto!important;display:flex;justify-content:flex-end}
+.data-tools>div{float:none!important}
+.data-tools .el-row{flex-wrap:nowrap;gap:8px;align-items:center}
+.data-tools .el-col{flex:0 0 auto!important;max-width:none!important;margin-left:0!important}

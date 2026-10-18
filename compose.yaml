@@ -1,0 +1,15 @@
+services:
+  workbench:
+    image: wtpy-plus:latest
+    build:
+      context: .
+    init: true
+    ports:
+      - "127.0.0.1:8100:8100"
+    volumes:
+      - workbench-data:/data
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+volumes:
+  workbench-data:

@@ -270,7 +270,7 @@ class SelContext:
         订阅实时行情
         @stdCode   合约代码
         '''
-        self.__wrapper__.sel_sub_ticks(stdCode)
+        self.__wrapper__.sel_sub_ticks(self.__id__, stdCode)
 
     def stra_get_position(self, stdCode:str, bonlyvalid:bool = False, usertag:str = "") -> float:
         '''

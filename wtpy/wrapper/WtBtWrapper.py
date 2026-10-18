@@ -11,6 +11,36 @@ from wtpy.WtUtilDefs import singleton
 from wtpy.WtDataDefs import WtNpKline, WtNpOrdDetails, WtNpOrdQueues, WtNpTicks, WtNpTransactions
 import os
 import math
+from functools import wraps
+
+def validate_cta_fill_config(fill_model, event_delay, participation_rate):
+    if fill_model not in ("legacy_cta", "causal_touch", "volume_limited"):
+        raise ValueError("fill_model must be legacy_cta, causal_touch or volume_limited")
+    if isinstance(event_delay, bool) or not isinstance(event_delay, int) \
+            or not 0 <= event_delay <= (1 << 64) - 1:
+        raise ValueError("event_delay must be an unsigned 64-bit integer")
+    if fill_model == "legacy_cta" and event_delay != 0:
+        raise ValueError("event_delay requires fill_model='causal_touch'")
+    if isinstance(participation_rate, bool) or not isinstance(participation_rate, (int, float)) \
+            or not math.isfinite(participation_rate):
+        raise ValueError("participation_rate must be finite")
+    if fill_model == "volume_limited":
+        if not 0 < participation_rate <= 1:
+            raise ValueError("volume_limited requires 0 < participation_rate <= 1")
+    elif participation_rate != 0:
+        raise ValueError("participation_rate requires fill_model='volume_limited'")
+
+def _capture_callback_error(method):
+    @wraps(method)
+    def guarded(self, *args):
+        if self.callback_error is not None:
+            return False
+        try:
+            return method(self, *args)
+        except Exception as error:
+            self.callback_error = error
+            return False
+    return guarded
 
 # Python对接C接口的库
 @singleton
@@ -28,6 +58,7 @@ class WtBtWrapper:
     # 构造函数, 传入动态库名
     def __init__(self, engine):
         self._engine = engine
+        self.callback_error = None
         paths = os.path.split(__file__)
         dllname = ph.getModule("WtBtPorter")
         a = (paths[:-1] + (dllname,))
@@ -127,6 +158,7 @@ class WtBtWrapper:
 
         self.api.get_raw_stdcode.restype = c_char_p
 
+    @_capture_callback_error
     def on_engine_event(self, evtid:int, evtDate:int, evtTime:int):
         engine = self._engine
         if evtid == EVENT_ENGINE_INIT:
@@ -141,6 +173,7 @@ class WtBtWrapper:
             engine.on_backtest_end()
         return
 
+    @_capture_callback_error
     def on_stra_init(self, id:int):
         engine = self._engine
         ctx = engine.get_context(id)
@@ -148,6 +181,7 @@ class WtBtWrapper:
             ctx.on_init()
         return
 
+    @_capture_callback_error
     def on_session_event(self, id:int, udate:int, isBegin:bool):
         engine = self._engine
         ctx = engine.get_context(id)
@@ -158,6 +192,7 @@ class WtBtWrapper:
                 ctx.on_session_end(udate)
         return
 
+    @_capture_callback_error
     def on_stra_calc(self, id:int, curDate:int, curTime:int):
         engine = self._engine
         ctx = engine.get_context(id)
@@ -165,6 +200,7 @@ class WtBtWrapper:
             ctx.on_calculate()
         return
 
+    @_capture_callback_error
     def on_stra_calc_done(self, id:int, curDate:int, curTime:int):
         engine = self._engine
         ctx = engine.get_context(id)
@@ -172,6 +208,7 @@ class WtBtWrapper:
             ctx.on_calculate_done()
         return
 
+    @_capture_callback_error
     def on_stra_tick(self, id:int, stdCode:str, newTick:POINTER(WTSTickStruct)):
         engine = self._engine
         ctx = engine.get_context(id)
@@ -180,6 +217,7 @@ class WtBtWrapper:
             ctx.on_tick(bytes.decode(stdCode), newTick)
         return
     
+    @_capture_callback_error
     def on_stra_bar(self, id:int, stdCode:str, period:str, newBar:POINTER(WTSBarStruct)):
         engine = self._engine
         ctx = engine.get_context(id)
@@ -187,6 +225,7 @@ class WtBtWrapper:
             ctx.on_bar(bytes.decode(stdCode), bytes.decode(period), newBar)
         return
 
+    @_capture_callback_error
     def on_stra_get_bar(self, id:int, stdCode:str, period:str, curBar:POINTER(WTSBarStruct), count:int, isLast:bool):
         '''
         获取K线回调, 该回调函数因为是python主动发起的, 需要同步执行, 所以不走事件推送
@@ -207,6 +246,7 @@ class WtBtWrapper:
         if ctx is not None:
             ctx.on_getbars(bytes.decode(stdCode), period, npBars)
 
+    @_capture_callback_error
     def on_stra_get_tick(self, id:int, stdCode:str, curTick:POINTER(WTSTickStruct), count:int, isLast:bool):
         '''
         获取Tick回调, 该回调函数因为是python主动发起的, 需要同步执行, 所以不走事件推送
@@ -225,18 +265,21 @@ class WtBtWrapper:
             ctx.on_getticks(bytes.decode(stdCode), npTicks)
         return
 
+    @_capture_callback_error
     def on_stra_get_position(self, id:int, stdCode:str, qty:float, isLast:bool):
         engine = self._engine
         ctx = engine.get_context(id)
         if ctx is not None:
             ctx.on_getpositions(bytes.decode(stdCode), qty, isLast)
 
+    @_capture_callback_error
     def on_stra_cond_triggerd(self, id:int, stdCode:str, target:float, price:float, usertag:str):
         engine = self._engine
         ctx = engine.get_context(id)
         if ctx is not None:
             ctx.on_condition_triggered(bytes.decode(stdCode), target, price, bytes.decode(usertag))
 
+    @_capture_callback_error
     def on_hftstra_channel_evt(self, id:int, trader:str, evtid:int):
         engine = self._engine
         ctx = engine.get_context(id)
@@ -247,6 +290,7 @@ class WtBtWrapper:
         elif evtid == CHNL_EVENT_LOST:
             ctx.on_channel_lost()
 
+    @_capture_callback_error
     def on_hftstra_order(self, id:int, localid:int, stdCode:str, isBuy:bool, totalQty:float, leftQty:float, price:float, isCanceled:bool, userTag:str):
         stdCode = bytes.decode(stdCode)
         userTag = bytes.decode(userTag,"gbk")
@@ -255,6 +299,7 @@ class WtBtWrapper:
         if ctx is not None:
             ctx.on_order(localid, stdCode, isBuy, totalQty, leftQty, price, isCanceled, userTag)
 
+    @_capture_callback_error
     def on_hftstra_trade(self, id:int, localid:int, stdCode:str, isBuy:bool, qty:float, price:float, userTag:str):
         stdCode = bytes.decode(stdCode)
         userTag = bytes.decode(userTag,"gbk")
@@ -263,6 +308,7 @@ class WtBtWrapper:
         if ctx is not None:
             ctx.on_trade(localid, stdCode, isBuy, qty, price, userTag)
 
+    @_capture_callback_error
     def on_hftstra_entrust(self, id:int, localid:int, stdCode:str, bSucc:bool, message:str, userTag:str):
         stdCode = bytes.decode(stdCode)
         message = bytes.decode(message, "gbk")
@@ -272,6 +318,7 @@ class WtBtWrapper:
         if ctx is not None:
             ctx.on_entrust(localid, stdCode, bSucc, message, userTag)
 
+    @_capture_callback_error
     def on_hftstra_order_queue(self, id:int, stdCode:str, newOrdQue:POINTER(WTSOrdQueStruct)):
         stdCode = bytes.decode(stdCode)
         engine = self._engine
@@ -281,6 +328,7 @@ class WtBtWrapper:
         if ctx is not None:
             ctx.on_order_queue(stdCode, newOrdQue.to_tuple())
 
+    @_capture_callback_error
     def on_hftstra_get_order_queue(self, id:int, stdCode:str, newOrdQue:POINTER(WTSOrdQueStruct), count:int, isLast:bool):
         engine = self._engine
         ctx = engine.get_context(id)
@@ -291,6 +339,7 @@ class WtBtWrapper:
         if ctx is not None:
             ctx.on_get_order_queue(bytes.decode(stdCode), npHftData)
 
+    @_capture_callback_error
     def on_hftstra_order_detail(self, id:int, stdCode:str, newOrdDtl:POINTER(WTSOrdDtlStruct)):
         stdCode = bytes.decode(stdCode)
         engine = self._engine
@@ -301,6 +350,7 @@ class WtBtWrapper:
         if ctx is not None:
             ctx.on_order_detail(stdCode, newOrdDtl.to_tuple())
 
+    @_capture_callback_error
     def on_hftstra_get_order_detail(self, id:int, stdCode:str, newOrdDtl:POINTER(WTSOrdDtlStruct), count:int, isLast:bool):
         engine = self._engine
         ctx = engine.get_context(id)
@@ -311,6 +361,7 @@ class WtBtWrapper:
         if ctx is not None:
             ctx.on_get_order_detail(bytes.decode(stdCode), npHftData)
 
+    @_capture_callback_error
     def on_hftstra_transaction(self, id:int, stdCode:str, newTrans:POINTER(WTSTransStruct)):
         stdCode = bytes.decode(stdCode)
         engine = self._engine
@@ -320,6 +371,7 @@ class WtBtWrapper:
         if ctx is not None:
             ctx.on_transaction(stdCode, newTrans.to_tuple())
         
+    @_capture_callback_error
     def on_hftstra_get_transaction(self, id:int, stdCode:str, newTrans:POINTER(WTSTransStruct), count:int, isLast:bool):
         engine = self._engine
         ctx = engine.get_context(id)
@@ -330,6 +382,7 @@ class WtBtWrapper:
         if ctx is not None:
             ctx.on_get_transaction(bytes.decode(stdCode), npHftData)
 
+    @_capture_callback_error
     def on_load_fnl_his_bars(self, stdCode:str, period:str) -> bool:
         engine = self._engine
         loader = engine.get_extended_data_loader()
@@ -338,6 +391,7 @@ class WtBtWrapper:
 
         return loader.load_final_his_bars(bytes.decode(stdCode), bytes.decode(period), self.api.feed_raw_bars)
 
+    @_capture_callback_error
     def on_load_raw_his_bars(self, stdCode:str, period:str) -> bool:
         engine = self._engine
         loader = engine.get_extended_data_loader()
@@ -354,6 +408,7 @@ class WtBtWrapper:
         '''
         self.api.feed_adj_factors(stdCode, dates, factors, len(dates))
 
+    @_capture_callback_error
     def on_load_adj_factors(self, stdCode:str) -> bool:
         engine = self._engine
         loader = engine.get_extended_data_loader()
@@ -363,6 +418,7 @@ class WtBtWrapper:
         stdCode = bytes.decode(stdCode)
         return loader.load_adj_factors(stdCode, self.feed_adj_factors)
 
+    @_capture_callback_error
     def on_load_his_ticks(self, stdCode:str, uDate:int) -> bool:
         engine = self._engine
         loader = engine.get_extended_data_loader()
@@ -1261,21 +1317,7 @@ class WtBtWrapper:
         @participation_rate    volume_limited 的实验性参与率，范围 (0,1]
         @return    系统内策略ID
         '''
-        if fill_model not in ("legacy_cta", "causal_touch", "volume_limited"):
-            raise ValueError("fill_model must be legacy_cta, causal_touch or volume_limited")
-        if isinstance(event_delay, bool) or not isinstance(event_delay, int) \
-                or not 0 <= event_delay <= (1 << 64) - 1:
-            raise ValueError("event_delay must be an unsigned 64-bit integer")
-        if fill_model == "legacy_cta" and event_delay != 0:
-            raise ValueError("event_delay requires fill_model='causal_touch'")
-        if isinstance(participation_rate, bool) or not isinstance(participation_rate, (int, float)) \
-                or not math.isfinite(participation_rate):
-            raise ValueError("participation_rate must be finite")
-        if fill_model == "volume_limited":
-            if not 0 < participation_rate <= 1:
-                raise ValueError("volume_limited requires 0 < participation_rate <= 1")
-        elif participation_rate != 0:
-            raise ValueError("participation_rate requires fill_model='volume_limited'")
+        validate_cta_fill_config(fill_model, event_delay, participation_rate)
 
         encoded_name = bytes(name, encoding="utf8")
         if fill_model == "legacy_cta":

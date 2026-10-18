@@ -1,3 +1,4 @@
+import atexit
 from wtpy.wrapper import WtWrapper
 from wtpy.CtaContext import CtaContext
 from wtpy.SelContext import SelContext
@@ -35,6 +36,7 @@ class WtEngine:
         self.is_backtest = False
 
         self.__wrapper__:WtWrapper = WtWrapper(self)  #api接口转换器
+        atexit.register(self.release)
         self.__cta_ctxs__ = dict()      #CTA策略ctx映射表
         self.__sel_ctxs__ = dict()      #SEL策略ctx映射表
         self.__hft_ctxs__ = dict()      #HFT策略ctx映射表
@@ -448,6 +450,10 @@ class WtEngine:
         释放框架
         '''
         self.__wrapper__.release()
+
+    def query_trade_account(self, trader: str = "") -> bool:
+        """Request funds only; True acknowledges submission, not a fresh reply."""
+        return self.__wrapper__.query_trade_account(trader)
 
     def on_init(self):
         if self.__reporter__ is not None:

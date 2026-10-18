@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Body, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.gzip import GZipMiddleware
@@ -14,12 +16,20 @@ import sys
 import chardet
 import pytz
 import base64
+import secrets
 
 from .WtLogger import WtLogger
 from .DataMgr import DataMgr, backup_file
 from .PushSvr import PushServer
 from .WatchDog import WatchDog, WatcherSink
 from .WtBtMon import WtBtMon
+from .StrategyControl import register_strategy_routes
+from .RiskControl import register_risk_routes
+from .ChannelProfiles import register_channel_routes, channel_transition_lock
+from .PlusBacktestRoutes import register_plus_routes
+from .TradeRiskApi import register_trade_risk_routes
+from .Roles import READ_ROLES, RESEARCH_ROLES, can_read, can_operate, can_admin, group_allowed
+from pathlib import Path
 from wtpy import WtDtServo
 import signal
 import platform
@@ -186,7 +196,7 @@ def get_cfg_tree(root: str, name: str):
 
     # 加一段编码检查的逻辑
     encoding = chardet.detect(content[:500])["encoding"]
-    content = content.decode(encoding)
+    content = content.decode(encoding or "utf-8")
 
     if isYaml:
         cfgObj = yaml.full_load(content)
@@ -304,7 +314,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 class WtMonSvr(WatcherSink):
 
-    def __init__(self, static_folder: str = "static/", deploy_dir="C:/", sink: WtMonSink = None, notifyTimeout:bool = True):
+    def __init__(self, static_folder: str = "static/", deploy_dir="C:/", sink: WtMonSink = None, notifyTimeout:bool = True, stop_apps_on_shutdown:bool = False):
         '''
         WtMonSvr构造函数
 
@@ -315,11 +325,13 @@ class WtMonSvr(WatcherSink):
 
         self.logger = WtLogger(__name__, "WtMonSvr.log")
         self._sink_ = sink
+        self.stop_apps_on_shutdown = stop_apps_on_shutdown
 
         # 数据管理器，主要用于缓存各组合的数据
         self.__data_mgr__ = DataMgr('data.db', logger=self.logger)
 
         self.__bt_mon__: WtBtMon = None
+        self.__plus_mon__ = None
         self.__dt_servo__: WtDtServo = None
 
         # 秘钥和开启token访问，单独控制，减少依赖项
@@ -329,9 +341,9 @@ class WtMonSvr(WatcherSink):
         # 看门狗模块，主要用于调度各个组合启动关闭
         self._dog = WatchDog(sink=self, db=self.__data_mgr__.get_db(), logger=self.logger)
 
-        app = FastAPI(title="WtMonSvr", description="A http api of WtMonSvr", redoc_url=None, version="1.0.0")
+        app = FastAPI(title="WtMonSvr", description="A http api of WtMonSvr", redoc_url=None, version="1.0.0", lifespan=self._lifespan)
         app.add_middleware(GZipMiddleware, minimum_size=1000)
-        app.add_middleware(SessionMiddleware, secret_key='!@#$%^&*()', max_age=25200, session_cookie='WtMonSvr_sid')
+        app.add_middleware(SessionMiddleware, secret_key=os.environ.get("WT_SESSION_SECRET") or secrets.token_urlsafe(32), max_age=25200, session_cookie='WtMonSvr_sid')
         app.add_middleware(
             CORSMiddleware,
             allow_origins=["*"],
@@ -342,10 +354,10 @@ class WtMonSvr(WatcherSink):
         script_dir = os.path.dirname(__file__)
         static_folder = os.path.join(script_dir, static_folder)
         target_dir = os.path.join(static_folder,"console")
-        app.mount("/console", StaticFiles(directory=target_dir), name="console")
+        app.mount("/console", StaticFiles(directory=target_dir, html=True), name="console")
 
         target_dir = os.path.join(static_folder,"mobile")
-        app.mount("/mobile", StaticFiles(directory=target_dir), name="mobile")
+        app.mount("/mobile", StaticFiles(directory=target_dir, html=True), name="mobile")
 
         self.app = app
         self.worker = None
@@ -358,6 +370,20 @@ class WtMonSvr(WatcherSink):
 
         self.init_mgr_apis(app)
         self.init_comm_apis(app)
+
+    @asynccontextmanager
+    async def _lifespan(self, app):
+        self.push_svr.run()
+        await self.push_svr.start()
+        try:
+            yield
+        finally:
+            if self.__plus_mon__ is not None:
+                await asyncio.to_thread(self.__plus_mon__.shutdown)
+            if self.__bt_mon__ is not None:
+                await asyncio.to_thread(self.__bt_mon__.shutdown)
+            await asyncio.to_thread(self._dog.shutdown, self.stop_apps_on_shutdown)
+            await self.push_svr.stop()
 
     def enable_token(self, seckey: str = "WtMonSvr@2021"):
         '''
@@ -376,6 +402,8 @@ class WtMonSvr(WatcherSink):
         '''
         self.__bt_mon__ = btMon
         self.init_bt_apis(self.app)
+        self.__plus_mon__ = register_plus_routes(self.app, btMon,
+            lambda request, token: check_auth(request, token, self.__sec_key__))
 
     def set_dt_servo(self, dtServo: WtDtServo):
         '''
@@ -386,6 +414,47 @@ class WtMonSvr(WatcherSink):
         self.__dt_servo__ = dtServo
 
     def init_bt_apis(self, app: FastAPI):
+        from .BacktestTemplates import STRATEGY_TYPES, normalize_strategy_type
+
+        @app.get("/bt/strategytypes", tags=["回测管理接口"])
+        @app.post("/bt/strategytypes", tags=["回测管理接口"])
+        def qry_strategy_types(request: Request, token: str = Body(None, embed=True)):
+            authenticated, info = check_auth(request, token, self.__sec_key__)
+            if not authenticated:
+                return info
+            if info["role"] not in RESEARCH_ROLES:
+                return {"result": -1, "message": "没有权限"}
+            return {"result": 0, "message": "OK", "types": list(STRATEGY_TYPES.values())}
+
+        @app.post("/bt/renamestra", tags=["回测管理接口"])
+        def rename_research_strategy(request: Request, straid: str = Body(..., embed=True),
+                name: str = Body(..., embed=True), token: str = Body(None, embed=True)):
+            ok, user = check_auth(request, token, self.__sec_key__)
+            if not ok:
+                return user
+            if user.get("role") not in RESEARCH_ROLES:
+                return {"result": -403, "message": "需要策略研究权限"}
+            try:
+                name = self.__bt_mon__.rename_strategy(user["loginid"], straid, name)
+            except (ValueError, OSError) as exc:
+                return {"result": -2, "message": str(exc)}
+            return {"result": 0, "message": "策略名称已修改", "name": name}
+
+        @app.post("/bt/qrybtdetail", tags=["回测管理接口"])
+        def qry_backtest_detail(request: Request,
+                straid: str = Body(..., embed=True), btid: str = Body(..., embed=True),
+                token: str = Body(None, embed=True)):
+            authenticated, info = check_auth(request, token, self.__sec_key__)
+            if not authenticated:
+                return info
+            if info["role"] not in RESEARCH_ROLES:
+                return {"result": -1, "message": "没有权限"}
+            if self.__bt_mon__ is None:
+                return {"result": -3, "message": "回测管理器未配置"}
+            detail = self.__bt_mon__.get_backtest_detail(info["loginid"], straid, btid)
+            if detail is None:
+                return {"result": -2, "message": "回测不存在或不属于该策略"}
+            return {"result": 0, "message": "OK", **detail}
 
         # 拉取K线数据
         @app.post("/bt/qrybars", tags=["回测管理接口"])
@@ -404,7 +473,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -431,7 +500,10 @@ class WtMonSvr(WatcherSink):
                     "message": "Data not found"
                 }
             else:
-                bar_list = [curBar.to_dict for curBar in bars]
+                bar_list = bars.to_df().to_dict(orient="records")
+                for bar in bar_list:
+                    bar["time"] = bar["bartime"]
+                    bar["date"] = int(bar["bartime"]) if len(str(bar["bartime"])) == 8 else int(bar["bartime"]) // 10000
 
                 ret = {
                     "result": 0,
@@ -454,7 +526,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -474,7 +546,8 @@ class WtMonSvr(WatcherSink):
         async def qry_stra_code(
                 request: Request,
                 token: str = Body(None, title="访问令牌", embed=True),
-                straid: str = Body(..., title="策略ID", embed=True)
+                straid: str = Body(..., title="策略ID", embed=True),
+                btid: str = Body(None, title="回测快照ID", embed=True)
         ):
             bSucc, userInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
@@ -482,7 +555,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -495,13 +568,13 @@ class WtMonSvr(WatcherSink):
                     "message": "回测管理器未配置"
                 }
             else:
-                if not self.__bt_mon__.has_strategy(user, straid):
+                if not self.__bt_mon__.has_strategy(user, straid, btid):
                     ret = {
                         "result": -2,
                         "message": "策略代码不存在"
                     }
                 else:
-                    content = self.__bt_mon__.get_strategy_code(user, straid)
+                    content = self.__bt_mon__.get_strategy_code(user, straid, btid)
                     ret = {
                         "result": 0,
                         "message": "OK",
@@ -524,7 +597,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -569,7 +642,8 @@ class WtMonSvr(WatcherSink):
         async def cmd_add_stra(
                 request: Request,
                 token: str = Body(None, title="访问令牌", embed=True),
-                name: str = Body(..., title="策略名称", embed=True)
+                name: str = Body(..., title="策略名称", embed=True),
+                strategy_type: str = Body("cta", title="策略类型", embed=True)
         ):
             bSucc, userInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
@@ -577,13 +651,18 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
                 }
                 return ret
 
+            name = name.strip()
+            try:
+                strategy_type = normalize_strategy_type(strategy_type)
+            except ValueError as error:
+                return {"result": -2, "message": str(error)}
             if len(name) == 0:
                 ret = {
                     "result": -2,
@@ -598,7 +677,7 @@ class WtMonSvr(WatcherSink):
                 }
                 return ret
 
-            straInfo = self.__bt_mon__.add_strategy(user, name)
+            straInfo = self.__bt_mon__.add_strategy(user, name, strategy_type)
             if straInfo is None:
                 ret = {
                     "result": -4,
@@ -626,7 +705,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -679,7 +758,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -727,7 +806,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -753,11 +832,11 @@ class WtMonSvr(WatcherSink):
                         "message": "策略不存在"
                     }
                 else:
-                    ret = {
-                        "result": 0,
-                        "message": "OK",
-                        "signals": self.__bt_mon__.get_bt_signals(user, straid, btid)
-                    }
+                    try:
+                        ret = {"result": 0, "message": "OK",
+                               "signals": self.__bt_mon__.get_bt_signals(user, straid, btid)}
+                    except ValueError as error:
+                        ret = {"result": -4, "message": str(error)}
 
             return ret
 
@@ -774,7 +853,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -816,7 +895,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -842,11 +921,11 @@ class WtMonSvr(WatcherSink):
                         "message": "策略不存在"
                     }
                 else:
-                    ret = {
-                        "result": 0,
-                        "message": "OK",
-                        "trades": self.__bt_mon__.get_bt_trades(user, straid, btid)
-                    }
+                    try:
+                        ret = {"result": 0, "message": "OK",
+                               "trades": self.__bt_mon__.get_bt_trades(user, straid, btid)}
+                    except ValueError as error:
+                        ret = {"result": -4, "message": str(error)}
 
             return ret
 
@@ -864,7 +943,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -912,7 +991,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -938,13 +1017,25 @@ class WtMonSvr(WatcherSink):
                         "message": "策略不存在"
                     }
                 else:
-                    ret = {
-                        "result": 0,
-                        "message": "OK",
-                        "rounds": self.__bt_mon__.get_bt_rounds(user, straid, btid)
-                    }
+                    try:
+                        ret = {"result": 0, "message": "OK",
+                               "rounds": self.__bt_mon__.get_bt_rounds(user, straid, btid)}
+                    except ValueError as error:
+                        ret = {"result": -4, "message": str(error)}
 
             return ret
+
+        @app.post("/bt/stopstrabt", tags=["回测管理接口"])
+        def cmd_stop_stra_bt(request: Request,
+                straid: str = Body(..., embed=True), btid: str = Body(..., embed=True),
+                token: str = Body(None, embed=True)):
+            authenticated, info = check_auth(request, token, self.__sec_key__)
+            if not authenticated:
+                return info
+            if info["role"] not in RESEARCH_ROLES:
+                return {"result": -1, "message": "没有权限"}
+            stopped = self.__bt_mon__.stop_backtest(info["loginid"], straid, btid)
+            return {"result": 0 if stopped else -2, "message": "OK" if stopped else "任务未运行"}
 
         # 启动策略回测
         @app.post("/bt/runstrabt", tags=["回测管理接口"])
@@ -952,10 +1043,13 @@ class WtMonSvr(WatcherSink):
                 request: Request,
                 token: str = Body(None, title="访问令牌", embed=True),
                 straid: str = Body(..., title="策略ID", embed=True),
-                stime: int = Body(None, title="开始时间", embed=True),
-                etime: int = Body(None, title="结束时间", embed=True),
-                capital: int = Body(500000, title="本金", embed=True),
-                slippage: int = Body(0, title="滑点", embed=True)
+                stime: int = Body(..., title="开始时间", embed=True),
+                etime: int = Body(..., title="结束时间", embed=True),
+                capital: int = Body(500000, gt=0, title="本金", embed=True),
+                slippage: int = Body(0, ge=0, title="滑点", embed=True),
+                fill_model: str = Body("causal_touch", embed=True),
+                event_delay: int = Body(0, ge=0, embed=True),
+                participation_rate: float = Body(0, ge=0, le=1, embed=True)
         ):
             bSucc, userInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
@@ -963,7 +1057,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in ['researcher', 'superman']:
+            if role not in RESEARCH_ROLES:
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -980,6 +1074,14 @@ class WtMonSvr(WatcherSink):
                     "message": "策略ID不能为空"
                 }
                 return ret
+
+            try:
+                for value in (fromtime, endtime):
+                    datetime.datetime.strptime(str(value), "%Y%m%d")
+                    if not 19900101 <= value <= 20321231:
+                        raise ValueError("回测日期支持1990至2032年")
+            except ValueError as error:
+                return {"result": -2, "message": str(error)}
 
             if fromtime > endtime:
                 fromtime, endtime = endtime, fromtime
@@ -999,7 +1101,11 @@ class WtMonSvr(WatcherSink):
                         "message": "策略不存在"
                     }
                 else:
-                    btInfo = self.__bt_mon__.run_backtest(user, straid, fromtime, endtime, capital, slippage)
+                    try:
+                        btInfo = self.__bt_mon__.run_backtest(user, straid, fromtime, endtime, capital, slippage,
+                                                            fill_model, event_delay, participation_rate)
+                    except ValueError as error:
+                        return {"result": -2, "message": str(error)}
                     ret = {
                         "result": 0,
                         "message": "OK",
@@ -1009,6 +1115,24 @@ class WtMonSvr(WatcherSink):
             return ret
 
     def init_mgr_apis(self, app: FastAPI):
+        register_strategy_routes(app, self.__data_mgr__, self._dog,
+                                 lambda request, token: check_auth(request, token, self.__sec_key__))
+        self.__risk_observer__ = register_risk_routes(app, self.__data_mgr__, self._dog,
+                                 lambda request, token: check_auth(request, token, self.__sec_key__))
+        register_channel_routes(app, self.__data_mgr__, self._dog,
+                                lambda request, token: check_auth(request, token, self.__sec_key__))
+        register_trade_risk_routes(app, self.__data_mgr__,
+                                   lambda request, token: check_auth(request, token, self.__sec_key__),
+                                   dog=self._dog)
+
+        def control_app(appid, action, user, audit):
+            try:
+                with channel_transition_lock:
+                    getattr(self._dog, action)(appid)
+            except Exception:
+                self.__data_mgr__.log_action(user, audit, json.dumps({"target": appid, "result": "failed"}))
+                raise
+
 
         '''下面是API接口的编写'''
 
@@ -1079,6 +1203,19 @@ class WtMonSvr(WatcherSink):
 
             return ret
 
+        @app.post("/mgr/session", tags=["用户接口"])
+        async def current_session(request: Request):
+            success, info = check_auth(request, None, self.__sec_key__)
+            if not success:
+                return {"result": -9999, "message": "登录已过期"}
+            user = self.__data_mgr__.get_user(info["loginid"])
+            if user is None:
+                return {"result": -9999, "message": "用户不存在"}
+            return {"result": 0, "userinfo": {
+                key: user.get(key, info.get(key, ""))
+                for key in ("loginid", "name", "role", "products")
+            }}
+
         # 修改密码
         # 修改密码
         @app.post("/mgr/modpwd", tags=["用户接口"])
@@ -1148,6 +1285,21 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return adminInfo
 
+            if not group_allowed(adminInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
+            if adminInfo.get("role") not in ("admin", "superman"):
+                return {"result": -403, "message": "仅管理员可修改组合"}
+            allowed = adminInfo.get("products", "")
+            allowed = [x.strip() for x in allowed.split(",") if x.strip()] if isinstance(allowed, str) else list(allowed or [])
+            if allowed and groupid not in allowed:
+                return {"result": -403, "message": "无权修改该组合"}
+
+            previous = self.__data_mgr__.get_group(groupid)
+            if previous and self._dog.isRunning(groupid) and any(
+                    previous.get(key) != value for key,value in
+                    (("path",path),("gtype",gtype),("env",env),("mqurl",mqurl))):
+                return {"result": -3, "message": "请先停止组合再修改运行环境；名称可直接修改"}
             id = groupid
 
             if action == "":
@@ -1217,6 +1369,16 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return adminInfo
 
+            if not group_allowed(adminInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
+            if adminInfo.get("role") not in ("admin", "superman"):
+                return {"result": -403, "message": "仅管理员可修改组合"}
+            allowed = adminInfo.get("products", "")
+            allowed = [x.strip() for x in allowed.split(",") if x.strip()] if isinstance(allowed, str) else list(allowed or [])
+            if allowed and groupid not in allowed:
+                return {"result": -403, "message": "无权修改该组合"}
+
             id = groupid
 
             if len(id) == 0:
@@ -1263,6 +1425,16 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return adminInfo
 
+            if not group_allowed(adminInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
+            if not can_operate(adminInfo):
+                return {"result": -403, "message": "当前角色不能停止进程"}
+            allowed = adminInfo.get("products", "")
+            allowed = [x.strip() for x in allowed.split(",") if x.strip()] if isinstance(allowed, str) else list(allowed or [])
+            if allowed and groupid not in allowed:
+                return {"result": -403, "message": "无权停止该进程"}
+
             grpid = groupid
 
             if not self.__data_mgr__.has_group(grpid):
@@ -1272,13 +1444,13 @@ class WtMonSvr(WatcherSink):
                 }
             else:
                 if self._dog.isRunning(grpid):
-                    self._dog.stop(grpid)
+                    await asyncio.to_thread(control_app, grpid, "stop", adminInfo, "stopgrp")
                 ret = {
                     "result": 0,
                     "message": "Ok"
                 }
 
-                self.__data_mgr__.log_action(adminInfo, "stopgrp", grpid)
+                self.__data_mgr__.log_action(adminInfo, "stopgrp", json.dumps({"target": grpid, "result": "ok"}))
 
             return ret
 
@@ -1293,6 +1465,16 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return adminInfo
 
+            if not group_allowed(adminInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
+            if not can_operate(adminInfo):
+                return {"result": -403, "message": "当前角色不能控制进程"}
+            allowed = adminInfo.get("products", "")
+            allowed = [x.strip() for x in allowed.split(",") if x.strip()] if isinstance(allowed, str) else list(allowed or [])
+            if allowed and groupid not in allowed:
+                return {"result": -403, "message": "无权控制该进程"}
+
             grpid = groupid
 
             if not self.__data_mgr__.has_group(grpid):
@@ -1302,12 +1484,12 @@ class WtMonSvr(WatcherSink):
                 }
             else:
                 if not self._dog.isRunning(grpid):
-                    self._dog.start(grpid)
+                    await asyncio.to_thread(control_app, grpid, "start", adminInfo, "startgrp")
                 ret = {
                     "result": 0,
                     "message": "Ok"
                 }
-                self.__data_mgr__.log_action(adminInfo, "startgrp", grpid)
+                self.__data_mgr__.log_action(adminInfo, "startgrp", json.dumps({"target": grpid, "result": "ok"}))
 
             return ret
 
@@ -1338,6 +1520,11 @@ class WtMonSvr(WatcherSink):
             bSucc, adminInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return adminInfo
+
+            if not can_admin(adminInfo):
+                return {"result": -403, "message": "需要管理员权限"}
+            if not group_allowed(adminInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
 
             grpid = groupid
 
@@ -1373,7 +1560,17 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return adminInfo
 
-            # 这里本来是要做检查的，算了，先省事吧
+            if not can_admin(adminInfo):
+                return {"result": -403, "message": "需要管理员权限"}
+            if not group_allowed(adminInfo, config.get("id", "")):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
+            if not config.get("id") or not config.get("path") or not config.get("folder"):
+                return {"result": -2, "message": "请填写任务ID、执行程序和工作目录"}
+            previous = self._dog.getAppConf(config["id"])
+            if previous and self._dog.isRunning(config["id"]) and any(
+                    config.get(key) != previous.get(key) for key in ("path", "folder", "param", "mqurl")):
+                return {"result": -3, "message": "请先停止进程再修改启动命令"}
             isGrp = False
             if "group" in config:
                 isGrp = config["group"]
@@ -1396,6 +1593,9 @@ class WtMonSvr(WatcherSink):
             bSucc, usrInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return usrInfo
+
+            if not can_admin(usrInfo):
+                return {"result": -403, "message": "需要管理员权限"}
 
             if True:
                 if self.deploy_tree is None:
@@ -1424,6 +1624,11 @@ class WtMonSvr(WatcherSink):
             bSucc, usrInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return usrInfo
+
+            if not can_admin(usrInfo):
+                return {"result": -403, "message": "需要管理员权限"}
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
 
             grpid = groupid
 
@@ -1460,7 +1665,7 @@ class WtMonSvr(WatcherSink):
                 groups = self.__data_mgr__.get_groups()
                 rets = list()
                 for grpInfo in groups:
-                    if len(products) == 0 or grpInfo["id"] in products:
+                    if group_allowed(tokenInfo, grpInfo["id"]):
                         grpInfo["running"] = self._dog.isRunning(grpInfo["id"])
                         rets.append(grpInfo)
 
@@ -1489,6 +1694,11 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return usrInfo
 
+            if not can_admin(usrInfo):
+                return {"result": -403, "message": "需要管理员权限"}
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
             grpid = groupid
 
             if not self.__data_mgr__.has_group(grpid):
@@ -1499,7 +1709,12 @@ class WtMonSvr(WatcherSink):
             else:
                 monCfg = self.__data_mgr__.get_group(grpid)
                 root = monCfg["path"]
-                if path[:len(root)] != root:
+                root_path = Path(root).resolve()
+                selected_path = Path(path)
+                selected_path = selected_path if selected_path.is_absolute() else root_path / selected_path
+                selected_path = selected_path.resolve()
+                path = str(selected_path)
+                if not selected_path.is_relative_to(root_path):
                     ret = {
                         "result": -1,
                         "message": "目标文件不在当前组合下"
@@ -1510,7 +1725,7 @@ class WtMonSvr(WatcherSink):
                     f.close()
 
                     encoding = chardet.detect(content)["encoding"]
-                    content = content.decode(encoding)
+                    content = content.decode(encoding or "utf-8")
 
                     ret = {
                         "result": 0,
@@ -1533,6 +1748,11 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return usrInfo
 
+            if not can_admin(usrInfo):
+                return {"result": -403, "message": "需要管理员权限"}
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
             grpid = groupid
 
             if not self.__data_mgr__.has_group(grpid):
@@ -1543,7 +1763,12 @@ class WtMonSvr(WatcherSink):
             else:
                 monCfg = self.__data_mgr__.get_group(grpid)
                 root = monCfg["path"]
-                if path[:len(root)] != root:
+                root_path = Path(root).resolve()
+                selected_path = Path(path)
+                selected_path = selected_path if selected_path.is_absolute() else root_path / selected_path
+                selected_path = selected_path.resolve()
+                path = str(selected_path)
+                if not selected_path.is_relative_to(root_path):
                     ret = {
                         "result": -1,
                         "message": "目标文件不在当前组合下"
@@ -1558,7 +1783,7 @@ class WtMonSvr(WatcherSink):
                         backup_file(path)
 
                         f = open(path, 'wb')
-                        f.write(content.encode(encoding))
+                        f.write(content.encode(encoding or "utf-8"))
                         f.close()
 
                         ret = {
@@ -1583,6 +1808,9 @@ class WtMonSvr(WatcherSink):
             bSucc, usrInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return usrInfo
+
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
 
             grpid = groupid
 
@@ -1610,6 +1838,9 @@ class WtMonSvr(WatcherSink):
             bSucc, usrInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return usrInfo
+
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
 
             grpid = groupid
 
@@ -1686,6 +1917,9 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return usrInfo
 
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
             gid = groupid
             sid = strategyid
 
@@ -1714,6 +1948,9 @@ class WtMonSvr(WatcherSink):
             bSucc, usrInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return usrInfo
+
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
 
             gid = groupid
             sid = strategyid
@@ -1744,6 +1981,9 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return usrInfo
 
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
             gid = groupid
             sid = strategyid
 
@@ -1772,6 +2012,9 @@ class WtMonSvr(WatcherSink):
             bSucc, usrInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return usrInfo
+
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
 
             gid = groupid
             sid = strategyid
@@ -1802,6 +2045,9 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return usrInfo
 
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
             gid = groupid
             sid = strategyid
 
@@ -1830,6 +2076,9 @@ class WtMonSvr(WatcherSink):
             bSucc, usrInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return usrInfo
+
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
 
             gid = groupid
             cid = channelid
@@ -1860,6 +2109,9 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return usrInfo
 
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
             gid = groupid
             cid = channelid
 
@@ -1888,6 +2140,9 @@ class WtMonSvr(WatcherSink):
             bSucc, usrInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return usrInfo
+
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
 
             gid = groupid
             cid = channelid
@@ -1918,6 +2173,9 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return usrInfo
 
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
             gid = groupid
             cid = channelid
 
@@ -1945,6 +2203,9 @@ class WtMonSvr(WatcherSink):
             bSucc, usrInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return usrInfo
+
+            if usrInfo.get("role") not in ("admin", "superman"):
+                return {"result": -403, "message": "仅管理员可管理用户和操作记录"}
 
             users = self.__data_mgr__.get_users()
             for usrInfo in users:
@@ -1975,6 +2236,12 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return adminInfo
 
+            if role not in READ_ROLES:
+                return {"result": -2, "message": "用户角色无效"}
+
+            if adminInfo.get("role") not in ("admin", "superman"):
+                return {"result": -403, "message": "仅管理员可管理用户和操作记录"}
+
             userinfo = {
                 "loginid": loginid,
                 "name": name,
@@ -1991,7 +2258,7 @@ class WtMonSvr(WatcherSink):
                 "message": "Ok"
             }
 
-            self.__data_mgr__.log_action(adminInfo, "cmtuser", json.dumps(userinfo))
+            self.__data_mgr__.log_action(adminInfo, "cmtuser", json.dumps({k:v for k,v in userinfo.items() if k != "passwd"}))
 
             return ret
 
@@ -2005,6 +2272,9 @@ class WtMonSvr(WatcherSink):
             bSucc, adminInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return adminInfo
+
+            if adminInfo.get("role") not in ("admin", "superman"):
+                return {"result": -403, "message": "仅管理员可管理用户和操作记录"}
 
             if self.__data_mgr__.del_user(loginid, adminInfo["loginid"]):
                 self.__data_mgr__.log_action(adminInfo, "delusr", loginid)
@@ -2026,6 +2296,9 @@ class WtMonSvr(WatcherSink):
             bSucc, adminInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return adminInfo
+
+            if adminInfo.get("role") not in ("admin", "superman") and loginid != adminInfo.get("loginid"):
+                return {"result": -403, "message": "只能修改自己的密码"}
 
             user = loginid
             pwd = passwd
@@ -2058,16 +2331,26 @@ class WtMonSvr(WatcherSink):
         async def qry_actions(
                 request: Request,
                 token: str = Body(None, title="访问令牌", embed=True),
-                sdate: int = Body(..., title="开始日期", embed=True),
-                edate: int = Body(..., title="结束日期", embed=True)
+                sdate: str = Body(..., title="开始日期", embed=True),
+                edate: str = Body(..., title="结束日期", embed=True)
         ):
             bSucc, adminInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return adminInfo
 
+            if adminInfo.get("role") not in ("admin", "superman"):
+                return {"result": -403, "message": "仅管理员可管理用户和操作记录"}
+
+            from datetime import datetime
+            try:
+                start = datetime.strptime(sdate, "%Y-%m-%d %H:%M:%S")
+                end = datetime.strptime(edate, "%Y-%m-%d %H:%M:%S")
+                if start > end:
+                    raise ValueError()
+            except ValueError:
+                return {"result": -2, "message": "请选择有效的起止日期"}
             ret = {
-                "result": 0,
-                "message": "",
+                "result": 0, "message": "",
                 "actions": self.__data_mgr__.get_actions(sdate, edate)
             }
 
@@ -2084,7 +2367,7 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return adminInfo
 
-            schedules = self._dog.get_apps()
+            schedules = {key: value for key,value in self._dog.get_apps().items() if group_allowed(adminInfo, key)}
             for appid in schedules:
                 schedules[appid]["group"] = self.__data_mgr__.has_group(appid)
 
@@ -2106,6 +2389,16 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return adminInfo
 
+            if not group_allowed(adminInfo, appid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
+            if not can_operate(adminInfo):
+                return {"result": -403, "message": "当前角色不能控制进程"}
+            allowed = adminInfo.get("products", "")
+            allowed = [x.strip() for x in allowed.split(",") if x.strip()] if isinstance(allowed, str) else list(allowed or [])
+            if allowed and appid not in allowed:
+                return {"result": -403, "message": "无权控制该进程"}
+
             if not self._dog.has_app(appid):
                 ret = {
                     "result": -1,
@@ -2113,12 +2406,12 @@ class WtMonSvr(WatcherSink):
                 }
             else:
                 if not self._dog.isRunning(appid):
-                    self._dog.start(appid)
+                    await asyncio.to_thread(control_app, appid, "start", adminInfo, "startapp")
                 ret = {
                     "result": 0,
                     "message": "Ok"
                 }
-                self.__data_mgr__.log_action(adminInfo, "startapp", appid)
+                self.__data_mgr__.log_action(adminInfo, "startapp", json.dumps({"target": appid, "result": "ok"}))
 
             return ret
 
@@ -2133,6 +2426,16 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return adminInfo
 
+            if not group_allowed(adminInfo, appid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
+            if not can_operate(adminInfo):
+                return {"result": -403, "message": "当前角色不能停止进程"}
+            allowed = adminInfo.get("products", "")
+            allowed = [x.strip() for x in allowed.split(",") if x.strip()] if isinstance(allowed, str) else list(allowed or [])
+            if allowed and appid not in allowed:
+                return {"result": -403, "message": "无权停止该进程"}
+
             if not self._dog.has_app(appid):
                 ret = {
                     "result": -1,
@@ -2140,13 +2443,13 @@ class WtMonSvr(WatcherSink):
                 }
             else:
                 if self._dog.isRunning(appid):
-                    self._dog.stop(appid)
+                    await asyncio.to_thread(control_app, appid, "stop", adminInfo, "stopapp")
                 ret = {
                     "result": 0,
                     "message": "Ok"
                 }
 
-                self.__data_mgr__.log_action(adminInfo, "stopapp", appid)
+                self.__data_mgr__.log_action(adminInfo, "stopapp", json.dumps({"target": appid, "result": "ok"}))
 
             return ret
 
@@ -2160,6 +2463,9 @@ class WtMonSvr(WatcherSink):
             bSucc, adminInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return adminInfo
+
+            if not can_admin(adminInfo):
+                return {"result": -403, "message": "需要管理员权限"}
 
             filename = os.getcwd() + "/logs/WtMonSvr.log"
             content, lines = get_tail(filename, 100, "UTF-8")
@@ -2182,6 +2488,11 @@ class WtMonSvr(WatcherSink):
             bSucc, adminInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return adminInfo
+
+            if not can_admin(adminInfo):
+                return {"result": -403, "message": "需要管理员权限"}
+            if not group_allowed(adminInfo, appid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
 
             id = appid
 
@@ -2233,6 +2544,9 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return usrInfo
 
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
             gid = groupid
 
             if not self.__data_mgr__.has_group(gid):
@@ -2259,6 +2573,9 @@ class WtMonSvr(WatcherSink):
             bSucc, usrInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return usrInfo
+
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
 
             gid = groupid
 
@@ -2287,6 +2604,9 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return usrInfo
 
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
             gid = groupid
 
             if not self.__data_mgr__.has_group(gid):
@@ -2313,6 +2633,9 @@ class WtMonSvr(WatcherSink):
             bSucc, usrInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return usrInfo
+
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
 
             gid = groupid
 
@@ -2341,6 +2664,9 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return usrInfo
 
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
             gid = groupid
 
             if not self.__data_mgr__.has_group(gid):
@@ -2367,6 +2693,9 @@ class WtMonSvr(WatcherSink):
             bSucc, usrInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return usrInfo
+
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
 
             gid = groupid
 
@@ -2396,6 +2725,11 @@ class WtMonSvr(WatcherSink):
             if not bSucc:
                 return usrInfo
 
+            if not can_operate(usrInfo):
+                return {"result": -403, "message": "当前角色不能控制过滤器"}
+            if not group_allowed(usrInfo, groupid):
+                return {"result": -403, "message": "没有该组合或进程的访问权限"}
+
             grpid = groupid
 
             if not self.__data_mgr__.has_group(grpid):
@@ -2406,6 +2740,7 @@ class WtMonSvr(WatcherSink):
             else:
                 try:
                     self.__data_mgr__.set_group_filters(grpid, filters)
+                    self.__data_mgr__.log_action(usrInfo, "cmtgrpfilters", json.dumps({"target": grpid, "result": "ok"}))
                     ret = {
                         "result": 0,
                         "message": "Ok"
@@ -2467,15 +2802,13 @@ class WtMonSvr(WatcherSink):
         uvicorn.run(self.app, port=port, host=host)
 
     def run(self, port: int = 8080, host="0.0.0.0", bSync: bool = True):
-        # 仅linux生效，在linux中，子进程会一直等待父进程处理其结束信号才能释放，如果不加这一句忽略子进程的结束信号，子进程就无法结束
-        if not isWindows():
-            signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+        # Each process owner waits for its children. Ignoring SIGCHLD discards exit codes.
         if bSync:
             self.__run_impl__(port, host)
         else:
             import threading
             self.worker = threading.Thread(target=self.__run_impl__, args=(port, host,))
-            self.worker.setDaemon(True)
+            self.worker.daemon = True
             self.worker.start()
 
     def init_logging(self):

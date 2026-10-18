@@ -272,7 +272,7 @@ class WtHftOptimizer:
             max_consecutive_loses = max(max_consecutive_loses, consecutive_loses)
 
         total_fee = df_funds["fee"].sum()
-        yearRet = round(df_funds["closeprofit"].mean() * np.float(244),3) 
+        yearRet = round(df_funds["closeprofit"].mean() * float(244),3) 
         vol = (df_funds["closeprofit"].std() * np.sqrt(244)).round(3)
         sr = yearRet / vol
         sr = sr.round(3)
@@ -500,5 +500,3 @@ class WtHftOptimizer:
                 analyst.run()
             except:
                 pass
-
-                
