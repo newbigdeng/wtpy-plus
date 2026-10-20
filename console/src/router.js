@@ -53,6 +53,7 @@ router.beforeEach(async to=>{
   }catch{return {path:'/login',query:{redirect:to.fullPath}}}
  }
  const role=session.cache.userinfo.role
+ if(role==='guest')return true
  if(to.path==='/admins'&&!['admin','superman'].includes(role))return '/monitor'
  if(to.path==='/backtest'&&!['researcher','admin','superman'].includes(role))return '/monitor'
  if(to.path==='/schedule'&&!['admin','superman'].includes(role))return '/monitor'

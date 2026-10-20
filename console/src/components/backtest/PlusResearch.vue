@@ -9,9 +9,10 @@
    <el-form-item label="合约"><el-input :model-value="selectedDataset?.code||'—'" readonly aria-label="Plus合约"/></el-form-item>
    <el-form-item label="开始时间"><el-input v-model="config.start" aria-label="Plus开始时间" placeholder="沿用数据集起点"/></el-form-item>
    <el-form-item label="结束时间"><el-input v-model="config.end" aria-label="Plus结束时间" placeholder="沿用数据集终点"/></el-form-item>
-   <el-form-item label="初始资金"><el-input-number v-model="config.capital" :min="1" :max="1000000000" :step="10000" aria-label="Plus初始资金"/></el-form-item>
+   <el-form-item label="初始资金"><el-input-number v-model="capitalInput" :min="1" :max="1000000000" :step="10000" aria-label="Plus初始资金"/></el-form-item>
    <el-form-item label="主K线周期"><el-select v-model="config.period" aria-label="Plus周期"><el-option label="1分钟" value="m1"/><el-option label="5分钟" value="m5"/></el-select></el-form-item>
-   <el-form-item label="CTA 执行策略"><el-select v-model="execution.id" aria-label="Plus执行策略" :disabled="engineType.toLowerCase()!=='cta'" @change="resetExecution"><el-option v-for="item in capabilities.executors||[]" :key="item.id" :value="item.id" :label="item.label"/></el-select><small v-if="engineType.toLowerCase()!=='cta'">HFT 由策略直接委托，不使用 CTA 执行器。</small></el-form-item>
+   <el-form-item v-if="engineType.toLowerCase()==='cta'" label="CTA 执行器"><el-select v-model="execution.id" aria-label="Plus执行策略" @change="resetExecution"><el-option v-for="item in capabilities.executors||[]" :key="item.id" :value="item.id" :label="item.label"/></el-select><small>与实盘复用 MinImpact、TWAP、VWAP 执行器。</small></el-form-item>
+   <el-form-item v-else label="委托方式"><span class="plus-direct-order">{{engineType.toUpperCase()==='HFT'?'HFT 由策略直接委托，不使用 CTA 执行器。':'当前引擎不支持 Plus 回测。'}}</span></el-form-item>
    <div v-if="engineType.toLowerCase()==='cta'" class="plus-custom-fees">
     <el-form-item v-for="item in executionFields" :key="item.key" :label="item.label"><el-input-number v-model="execution.params[item.key]" :min="item.min??0" :max="item.max??1000000" :precision="0" :aria-label="'执行'+item.label"/></el-form-item>
     <el-form-item v-if="execution.id==='vwap'" label="各时段成交量权重（逗号分隔）"><el-input v-model="execution.weights" type="textarea" aria-label="VWAP成交量权重" placeholder="例如 1,2,4,2,1"/><small>窗口等分为这些时段。请填历史估计曲线；不会读取回放未来成交量。</small></el-form-item>
@@ -64,9 +65,11 @@ import PlusFinanceReport from './PlusFinanceReport.vue'
 const running=task=>['queued','running'].includes(task.status)
 export default {
  name:'PlusResearch',components:{PlusFinanceReport},
- props:{strategyid:{type:String,required:true},engineType:{type:String,default:'cta'},beforeSave:{type:Function,required:true}},
- data:()=>({capabilities:{datasets:[],engines:[],executors:[],limitations:[]},execution:{id:'minimpact',params:{pricemode:1,offset:0,expire:5,span:0,byrate:false,lots:1},weights:''},config:{dataset:'',start:'',end:'',capital:1000000,period:'m1'},finance:{feeMode:'dataset',fees:{byvolume:true,open:null,close:null,closetoday:null,minfee:0},marginPercent:null,slippageTicks:0},feeFields:[{key:'open',label:'开仓费率'},{key:'close',label:'平仓费率'},{key:'closetoday',label:'平今费率'},{key:'minfee',label:'每次成交最低费'}],tasks:[],loading:false,launching:false,detail:null,ledgerTab:'trades',generation:0,ledgers:[{id:'trades',label:'成交'},{id:'orders',label:'委托'},{id:'positions',label:'持仓'},{id:'funds',label:'资金'},{id:'rejections',label:'拒单'},{id:'events',label:'事件'},{id:'route',label:'链路证据'},{id:'log',label:'运行日志'}]}),
+ props:{strategyid:{type:String,required:true},engineType:{type:String,default:'cta'},beforeSave:{type:Function,required:true},capital:{type:Number,default:1000000},active:{type:Boolean,default:true},guest:{type:Boolean,default:false}},
+ emits:['update:capital'],
+ data:()=>({capabilities:{datasets:[],engines:[],executors:[],limitations:[]},execution:{id:'minimpact',params:{pricemode:1,offset:0,expire:5,span:0,byrate:false,lots:1},weights:''},config:{dataset:'',start:'',end:'',period:'m1'},finance:{feeMode:'dataset',fees:{byvolume:true,open:null,close:null,closetoday:null,minfee:0},marginPercent:null,slippageTicks:0},feeFields:[{key:'open',label:'开仓费率'},{key:'close',label:'平仓费率'},{key:'closetoday',label:'平今费率'},{key:'minfee',label:'每次成交最低费'}],tasks:[],loading:false,launching:false,detail:null,ledgerTab:'trades',generation:0,ledgers:[{id:'trades',label:'成交'},{id:'orders',label:'委托'},{id:'positions',label:'持仓'},{id:'funds',label:'资金'},{id:'rejections',label:'拒单'},{id:'events',label:'事件'},{id:'route',label:'链路证据'},{id:'log',label:'运行日志'}]}),
  computed:{
+  capitalInput:{get(){return this.capital},set(value){this.$emit('update:capital',value)}},
   executionFields(){return this.execution.id==='minimpact'?[{key:'pricemode',label:'价格模式（-1本方／0最新／1对手／2自动）',min:-1,max:2},{key:'offset',label:'委托偏移跳数',min:-1000,max:1000},{key:'expire',label:'挂单超时秒',max:86400},{key:'span',label:'最短发单间隔毫秒',max:86400000},{key:'lots',label:'单次委托手数',min:1}]:[{key:'begin_time',label:'窗口开始（HHMM）',max:2359},{key:'end_time',label:'窗口结束（HHMM）',max:2359},{key:'ord_sticky',label:'挂单超时秒',max:86400},{key:'tail_secs',label:'窗口收尾秒数',max:86400},{key:'total_times',label:'拆单次数',min:1,max:10000},{key:'price_mode',label:'价格模式（0最新／1本方／2对手）',max:2},{key:'price_offset',label:'委托偏移跳数',max:1000},{key:'minopenlots',label:'最小拆单手数',min:1}]},
   selectedDataset(){return(this.capabilities.datasets||[]).find(item=>item.id===this.config.dataset)},
   datasetFees(){return this.selectedDataset?.finance?.fees},
@@ -92,6 +95,7 @@ export default {
   financePayload(){const value={slippage_ticks:this.finance.slippageTicks};if(!Number.isInteger(value.slippage_ticks)||value.slippage_ticks<0)throw new Error('滑点必须是非负整数跳数');if(this.finance.marginPercent!=null){if(!Number.isFinite(this.finance.marginPercent)||this.finance.marginPercent<=0||this.finance.marginPercent>100)throw new Error('保证金比例须大于 0 且不超过 100%');value.marginrate=this.finance.marginPercent/100}else if(!this.selectedDataset?.finance?.margin?.known)throw new Error('数据集缺少保证金比例，请填写覆盖比例');if(this.finance.feeMode==='custom'){for(const field of this.feeFields){const amount=this.finance.fees[field.key];if(amount==null||!Number.isFinite(amount)||amount<0)throw new Error('请填写完整的非负手续费参数')}value.fees={...this.finance.fees}}else if(!this.datasetFees?.known)throw new Error('数据集缺少手续费，请选择自定义并填写费用');return value},
   async refresh(){const generation=this.generation,id=this.strategyid;this.loading=true;try{const value=await this.request('list',{straid:id});if(generation===this.generation)this.tasks=value.tasks||[]}catch(error){if(generation===this.generation)this.$message.error(error.message)}finally{if(generation===this.generation)this.loading=false}},
   async launch(){
+   if(this.guest){this.$message.warning('游客模式不支持操作');return}
    if(this.launching||this.unsupported||!this.selectedDataset)return
    const straid=this.strategyid,generation=this.generation
    this.launching=true
@@ -100,18 +104,18 @@ export default {
     const finance=this.financePayload(),execution=this.executionPayload()
     if(!await this.beforeSave())return
     if(generation!==this.generation)return
-    const value=await this.request('run',{straid,dataset:this.config.dataset,code:this.selectedDataset.code,start:this.config.start||null,end:this.config.end||null,capital:this.config.capital,period:this.config.period,finance,execution})
+    const value=await this.request('run',{straid,dataset:this.config.dataset,code:this.selectedDataset.code,start:this.config.start||null,end:this.config.end||null,capital:this.capital,period:this.config.period,finance,execution})
     if(generation!==this.generation)return
     this.$message.success('Plus 仿真任务已启动');await this.refresh();if(value.task)await this.open(value.task)
    }catch(error){this.$message.error(error.message)}finally{this.launching=false}
   },
   async open(task){this.detail={task};await this.loadDetail()},
   async loadDetail(){const id=this.detail?.task?.id,generation=this.generation;if(!id)return;try{const value=await this.request('detail',{taskid:id});if(generation===this.generation&&this.detail?.task?.id===id){this.detail=value;this.$nextTick(this.drawEquity)}}catch(error){this.$message.error(error.message)}},
-  async stop(task){try{await this.$confirm('停止本次历史回放并保留已生成记录？','停止 Plus 任务',{confirmButtonText:'停止',cancelButtonText:'取消',type:'warning'});await this.request('stop',{taskid:task.id});await this.refresh();if(this.detail?.task?.id===task.id)await this.loadDetail()}catch(error){if(error instanceof Error)this.$message.error(error.message)}},
+  async stop(task){if(this.guest){this.$message.warning('游客模式不支持操作');return}try{await this.$confirm('停止本次历史回放并保留已生成记录？','停止 Plus 任务',{confirmButtonText:'停止',cancelButtonText:'取消',type:'warning'});await this.request('stop',{taskid:task.id});await this.refresh();if(this.detail?.task?.id===task.id)await this.loadDetail()}catch(error){if(error instanceof Error)this.$message.error(error.message)}},
   closeDetail(){this._equity?.dispose();this._equity=null;this.detail=null},
   drawEquity(){const node=this.$refs.equityChart;if(!node||!this.equityPoints.length)return;this._equity??=echarts.init(node);const colour=getComputedStyle(document.documentElement).getPropertyValue('--wt-text').trim(),line=getComputedStyle(document.documentElement).getPropertyValue('--wt-success').trim();this._equity.setOption({animation:false,tooltip:{trigger:'axis'},grid:{left:85,right:30,top:20,bottom:35},xAxis:{type:'category',data:this.equityPoints.map(item=>item[0]),axisLabel:{color:colour}},yAxis:{type:'value',scale:true,axisLabel:{color:colour}},series:[{type:'line',showSymbol:false,data:this.equityPoints.map(item=>item[1]),lineStyle:{color:line,width:1.5}}]});this._equity.resize()}
  },
- watch:{strategyid(){++this.generation;this.closeDetail();this.tasks=[];this.refresh()}},
+ watch:{strategyid(){++this.generation;this.closeDetail();this.tasks=[];this.refresh()},active(value){if(value)this.$nextTick(this.drawEquity)}},
  async mounted(){try{const value=await this.request('capabilities');if(this._disposed)return;this.capabilities=value;this.config.dataset=value.datasets?.[0]?.id||'';this.selectDataset()}catch(error){if(!this._disposed)this.$message.error(error.message)}if(this._disposed)return;await this.refresh();if(this._disposed)return;this._poll=setInterval(()=>{if(this.tasks.some(running)){this.refresh();if(this.detail?.task&&running(this.detail.task))this.loadDetail()}},1500);this._resize=()=>this._equity?.resize();window.addEventListener('resize',this._resize);this._theme=new MutationObserver(()=>this.drawEquity());this._theme.observe(document.documentElement,{attributes:true,attributeFilter:['data-wt-theme']})},
  beforeUnmount(){this._disposed=true;++this.generation;clearInterval(this._poll);window.removeEventListener('resize',this._resize);this._theme?.disconnect();this._equity?.dispose()}
 }

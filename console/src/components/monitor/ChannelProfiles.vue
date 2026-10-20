@@ -17,7 +17,7 @@
         <el-tag :type="row.datahub_running ? 'success' : 'info'">{{ row.datahub_running ? '运行中' : '已停止' }}</el-tag>
       </template></el-table-column>
       <el-table-column label="操作" width="150"><template #default="{ row }">
-        <el-button :disabled="!canSwitch || running || !row.ready || row.current" :loading="busy === row.id" @click="select(row)">
+        <el-button :disabled="!isGuest && (!canSwitch || running || !row.ready || row.current)" :loading="busy === row.id" @click="select(row)">
           {{ row.current ? '已选定' : '选择环境' }}
         </el-button>
       </template></el-table-column>
@@ -27,11 +27,13 @@
 </template>
 
 <script>
+import {useSessionStore} from "@/store.js";
 export default {
   name: 'ChannelProfiles',
   props: { groupid: { type: String, required: true } },
   emits: ['changed'],
   data: () => ({ profiles: [], loading: false, busy: '', running: false, canSwitch: false, serial: 0 }),
+  computed:{isGuest(){return useSessionStore().cache.userinfo?.role==='guest'}},
   methods: {
     async request(path, body) {
       const response = await fetch('/mgr/' + path, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -52,6 +54,7 @@ export default {
       finally { if (serial === this.serial) this.loading = false; }
     },
     async select(row) {
+      if(this.isGuest){this.$message.warning('游客模式不支持操作');return;}
       try {
         await this.$confirm('切换到“' + row.label + '”后，将显示该环境独立的行情和账户记录。已有挂单及持仓不会随之转移。确认切换？', '切换通道环境', { type: 'warning', confirmButtonText: '确认切换', cancelButtonText: '取消' });
         this.busy = row.id;

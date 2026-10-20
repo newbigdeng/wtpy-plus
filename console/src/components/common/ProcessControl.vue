@@ -1,14 +1,17 @@
 <template>
  <span class="process-control">
   <span v-if="showState" class="process-state" :class="{running}" title="组合进程状态，不代表柜台已登录"><i/>{{running?'运行中':'已停止'}}</span>
-  <el-button :type="running?'danger':'success'" plain :loading="busy" :disabled="disabled" :aria-label="(running?'停止进程 ':'启动进程 ')+id" @click="control">{{running?'停止进程':'启动进程'}}</el-button>
+  <el-button :type="running?'danger':'success'" plain :loading="busy" :disabled="disabled && !isGuest" :aria-label="(running?'停止进程 ':'启动进程 ')+id" @click="control">{{running?'停止进程':'启动进程'}}</el-button>
  </span>
 </template>
 <script>
+import {useSessionStore} from "@/store.js";
 export default {
  props:{id:{type:String,required:true},name:{type:String,default:''},running:Boolean,kind:{type:String,default:'app'},showState:{type:Boolean,default:true},disabled:Boolean},
+ computed:{isGuest(){return useSessionStore().cache.userinfo?.role==='guest'}},
  emits:['changed'],data:()=>({busy:false}),
  methods:{async control(){
+  if(this.isGuest){this.$message.warning("游客模式不支持操作");return;}
   if(this.busy || !this.id)return;
   const stopping=this.running, name=this.name||this.id;
   try{

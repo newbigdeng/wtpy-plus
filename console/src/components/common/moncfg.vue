@@ -353,6 +353,7 @@ export default {
     watch:{config:{immediate:true,handler(value){this.originalConfig=JSON.parse(JSON.stringify(value));this.submitted=false;if(!value.path)this.onLinkPython(true)}}},
     methods: {
         onLinkPython: function(onlyEmpty=false){
+            if(useSessionStore().cache.userinfo?.role==='guest'){if(!onlyEmpty)this.$message.warning('游客模式不支持操作');return;}
             const target=this.config;
             this.$api.getPythonPath((resObj)=>{
                 if(resObj.result < 0){
@@ -364,6 +365,7 @@ export default {
             })
         },
         handlePickFolder: function(e){
+            if(useSessionStore().cache.userinfo?.role==='guest'){this.$message.warning('游客模式不支持操作');return;}
             let self = this;
             self.selfolder = "";
             if(self.folders.length == 0){
@@ -394,6 +396,7 @@ export default {
             this.selfolder = data.path;
         },
         onConfigCommit: function(){
+            if(useSessionStore().cache.userinfo?.role==='guest'){this.$message.warning('游客模式不支持操作');return;}
             let self = this;
             this.submitted=true;
             if(this.validationErrors.length)return;

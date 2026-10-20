@@ -31,6 +31,7 @@ Python 负责任务、策略接口和网页服务。
 - 表格：关键词、时间、列选择和 CSV 导出。
 - 风险面板：权益、保证金、可用资金和拒单。
 - 策略控制：分开提供暂停决策和原生过滤。
+- 策略接入：页面导入 Python、配置参数与执行通道。
 - 通道配置：停机后切换已登记的环境。
 
 界面支持黑白主题，也可跟随系统。
@@ -44,6 +45,66 @@ Ctrl+K 打开命令入口。
 柜台断开或账户过旧时，柜台指标显示未知。
 手续费与资金查询来自原生回报。
 “已请求”与“已收到新资金回报”分开判断。
+
+## 怎样在页面添加交易策略？
+
+新组合和已有组合都能保存独立的启动计划。
+
+研究页中的策略不会自动加入交易组合。
+进入监控中心的“策略管理”，配置实际交易实例。
+保存草稿、应用配置和启动进程分别操作。
+
+1. 新组合先选环境模板，再选 CTA 或 HFT。
+2. 导入 `.py`，页面识别策略类和构造参数。
+3. 填写唯一实例 ID、显示名称和参数。
+4. 选择已配置的交易通道。
+5. CTA 再选择 MinImpact、TWAP 或 VWAP。
+6. 保存草稿，停机后应用，再决定是否手动启动。
+
+已有组合首次应用时，需要确认切换启动入口。
+原 `run.py` 保留，页面使用独立固定入口。
+旧入口中的策略不会自动迁移。
+原有持仓和活动委托应先处理妥当。
+
+保存时只解析 Python 语法，不执行用户代码。
+启动后，独立进程调用原有 `WtEngine` 接口。
+CTA 使用原生策略路由、执行器和交易适配器。
+HFT 直接使用所选交易通道。
+
+新组合不复制旧账簿、委托和一次性交易许可。
+自动守护、定时启动和交易授权默认关闭。
+只有管理员能修改计划，游客仅能查看概要。
+
+## 账户权益曲线怎样读取？
+
+曲线记录真实柜台权益，不用组合损益代替本金。
+
+账户权益等于柜台余额加浮动盈亏。
+每个账户、币种按资金回执时间保存采样。
+重复读取同一份回执，不会新增采样点。
+旧版仅保存余额的缓存另存，不冒充权益。
+
+- 顶部账户卡可直接打开曲线。
+- 支持今日、近七天、全部与展开查看。
+- 一个采样点也会显示，并注明实际时间。
+- 断线或过期会明确标注，不伪造盘中更新。
+
+MA 叠加在 K 线主图，MACD、KDJ 各有副图。
+指标参数可修改，图表缩放与时间轴联动。
+
+## 游客可以操作哪些内容？
+
+游客共享页面导航，但不能修改或控制进程。
+
+后端只开放明确登记的读取接口。
+新增接口默认不向游客开放。
+源码、构造参数、账户密钥和原始日志不下发。
+启停、保存、导入、回测运行均检查操作权限。
+
+游客功能默认关闭，可绑定一个已有所有者账户。
+它不提供公开注册，也不会为访客创建数据库账号。
+具体域名、证书和反向代理配置由部署环境维护。
+这些服务器配置不包含在本仓库中。
 
 ## 两种回测怎么选？
 
@@ -231,6 +292,8 @@ Python 依赖固定在 [requirements-plus.lock](requirements-plus.lock)。
 | 费用及执行参数 | [TradeFinance.py](wtpy/monitor/TradeFinance.py)、[PlusExecution.py](wtpy/monitor/PlusExecution.py) |
 | 柜台风险与资金基准 | [TradeRiskApi.py](wtpy/monitor/TradeRiskApi.py) |
 | 策略暂停与过滤 | [StrategyRuntime.py](wtpy/StrategyRuntime.py)、[StrategyControl.py](wtpy/monitor/StrategyControl.py) |
+| 页面策略计划与运行入口 | [ManagedStrategies.py](wtpy/monitor/ManagedStrategies.py)、[ManagedStrategyRunner.py](wtpy/monitor/ManagedStrategyRunner.py) |
+| 游客访问控制 | [GuestAccess.py](wtpy/monitor/GuestAccess.py) |
 | 历史行情与交易时段 | [WorkbenchApi.py](wtpy/monitor/WorkbenchApi.py)、[MarketSessions.py](wtpy/monitor/MarketSessions.py) |
 | 前端工作台 | [console/src/components](console/src/components) |
 

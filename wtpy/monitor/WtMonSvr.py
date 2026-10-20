@@ -24,11 +24,15 @@ from .PushSvr import PushServer
 from .WatchDog import WatchDog, WatcherSink
 from .WtBtMon import WtBtMon
 from .StrategyControl import register_strategy_routes
+from .ManagedStrategies import register_managed_routes, validate_managed_start
 from .RiskControl import register_risk_routes
 from .ChannelProfiles import register_channel_routes, channel_transition_lock
+from .MarketSubscriptions import register_market_subscription_routes
+from .MarketHistory import register_market_history_routes
 from .PlusBacktestRoutes import register_plus_routes
 from .TradeRiskApi import register_trade_risk_routes
-from .Roles import READ_ROLES, RESEARCH_ROLES, can_read, can_operate, can_admin, group_allowed
+from .Roles import READ_ROLES, RESEARCH_ROLES, can_read, can_operate, can_admin, group_allowed, can_research_read
+from .GuestAccess import GuestAccessMiddleware, LoginAttempts, guest_session_valid, GUEST_READ_PATHS
 from pathlib import Path
 from wtpy import WtDtServo
 import signal
@@ -101,45 +105,29 @@ def get_tail(filename, N: int = 100, encoding="GBK"):
     return ''.join(last_line), len(last_line)
 
 
-def check_auth(request: Request, token:str = None, seckey:str = None):
-    if token is None:
-        tokeninfo = get_session(request, "tokeninfo")
-        # session里没有用户信息
-        if tokeninfo is None:
-            return False, {
-                "result": -999,
-                "message": "请先登录"
-            }
-
-        # session里有用户信息，则要读取
-        exptime = tokeninfo["expiretime"]
-        now = datetime.datetime.now().replace(tzinfo=pytz.timezone('UTC')).strftime("%Y.%m.%d %H:%M:%S")
-        if now > exptime:
-            return False, {
-                "result": -999,
-                "message": "登录已超时，请重新登录"
-            }
-
-        return True, tokeninfo
-    else:
-        tokeninfo = AES_Decrypt(seckey, token)
-        # session里没有用户信息
-        if tokeninfo is None:
-            return False, {
-                "result": -999,
-                "message": "请先登录"
-            }
-
-        # session里有用户信息，则要读取
-        exptime = tokeninfo["expiretime"]
-        now = datetime.datetime.now().replace(tzinfo=pytz.timezone('UTC')).strftime("%Y.%m.%d %H:%M:%S")
-        if now > exptime:
-            return False, {
-                "result": -999,
-                "message": "登录已超时，请重新登录"
-            }
-
-        return True, tokeninfo
+def check_auth(request: Request, token: str = None, seckey: str = None):
+    settings = request.app.state
+    tokeninfo = get_session(request, "tokeninfo")
+    if tokeninfo and tokeninfo.get("role") == "guest":
+        if not guest_session_valid(request.scope):
+            return False, {"result": -999, "message": "登录已过期"}
+        info = dict(tokeninfo)
+        if request.url.path in GUEST_READ_PATHS and request.url.path.startswith("/bt/"):
+            info["loginid"] = settings.monitor_owner
+        return True, info
+    if token is not None:
+        if getattr(settings, "guest_enabled", False):
+            return False, {"result": -999, "message": "请使用账户会话登录"}
+        try:
+            tokeninfo = json.loads(AES_Decrypt(seckey, token))
+        except (ValueError, TypeError, KeyError):
+            tokeninfo = None
+    now = datetime.datetime.now().strftime("%Y.%m.%d %H:%M:%S")
+    if not isinstance(tokeninfo, dict) or now >= tokeninfo.get("expiretime", ""):
+        return False, {"result": -999, "message": "请先登录"}
+    if getattr(settings, "guest_enabled", False) and (tokeninfo.get("loginid") != settings.monitor_owner or tokeninfo.get("auth_version") != settings.auth_version):
+        return False, {"result": -999, "message": "请重新登录"}
+    return True, tokeninfo
 
 def get_cfg_tree(root: str, name: str):
     if not os.path.exists(root):
@@ -341,15 +329,25 @@ class WtMonSvr(WatcherSink):
         # 看门狗模块，主要用于调度各个组合启动关闭
         self._dog = WatchDog(sink=self, db=self.__data_mgr__.get_db(), logger=self.logger)
 
-        app = FastAPI(title="WtMonSvr", description="A http api of WtMonSvr", redoc_url=None, version="1.0.0", lifespan=self._lifespan)
+        app = FastAPI(title="WtMonSvr", description="A http api of WtMonSvr", redoc_url=None, docs_url=None, openapi_url=None, version="1.0.0", lifespan=self._lifespan)
+        app.state.guest_enabled = os.environ.get("WT_GUEST_ENABLED", "0") == "1"
+        app.state.monitor_owner = os.environ.get("WT_MONITOR_OWNER", "").strip()
+        app.state.auth_version = secrets.token_urlsafe(24)
+        if app.state.guest_enabled:
+            owner = self.__data_mgr__.get_user(app.state.monitor_owner)
+            if owner is None or not can_admin(owner):
+                raise ValueError("启用游客前，请设置 WT_MONITOR_OWNER 为现有管理员账户")
+        app.state.login_attempts = LoginAttempts()
+        app.add_middleware(GuestAccessMiddleware)
+        app.add_middleware(SessionMiddleware,
+            secret_key=os.environ.get("WT_SESSION_SECRET") or secrets.token_urlsafe(32),
+            max_age=21600, session_cookie="WtMonSvr_sid", same_site="strict",
+            https_only=os.environ.get("WT_COOKIE_SECURE", "0") == "1")
         app.add_middleware(GZipMiddleware, minimum_size=1000)
-        app.add_middleware(SessionMiddleware, secret_key=os.environ.get("WT_SESSION_SECRET") or secrets.token_urlsafe(32), max_age=25200, session_cookie='WtMonSvr_sid')
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"])
+        origins = [item.strip() for item in os.environ.get("WT_ALLOWED_ORIGINS", "").split(",") if item.strip()]
+        if origins:
+            app.add_middleware(CORSMiddleware, allow_origins=origins,
+                allow_credentials=True, allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
 
         script_dir = os.path.dirname(__file__)
         static_folder = os.path.join(script_dir, static_folder)
@@ -422,7 +420,7 @@ class WtMonSvr(WatcherSink):
             authenticated, info = check_auth(request, token, self.__sec_key__)
             if not authenticated:
                 return info
-            if info["role"] not in RESEARCH_ROLES:
+            if not can_research_read(info):
                 return {"result": -1, "message": "没有权限"}
             return {"result": 0, "message": "OK", "types": list(STRATEGY_TYPES.values())}
 
@@ -447,7 +445,7 @@ class WtMonSvr(WatcherSink):
             authenticated, info = check_auth(request, token, self.__sec_key__)
             if not authenticated:
                 return info
-            if info["role"] not in RESEARCH_ROLES:
+            if not can_research_read(info):
                 return {"result": -1, "message": "没有权限"}
             if self.__bt_mon__ is None:
                 return {"result": -3, "message": "回测管理器未配置"}
@@ -473,12 +471,19 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in RESEARCH_ROLES:
+            if not can_research_read(userInfo):
                 ret = {
                     "result": -1,
                     "message": "没有权限"
                 }
                 return ret
+
+            if role == "guest":
+                import re
+                if not re.fullmatch(r"[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+", code) or period not in ("m1", "m5", "d", "d1"):
+                    return {"result": -2, "message": "合约或周期无效"}
+                stime = None
+                count = max(1, min(count or 600, 2000))
 
             if self.__dt_servo__ is None:
                 ret = {
@@ -526,7 +531,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in RESEARCH_ROLES:
+            if not can_research_read(userInfo):
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -758,7 +763,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in RESEARCH_ROLES:
+            if not can_research_read(userInfo):
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -806,7 +811,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in RESEARCH_ROLES:
+            if not can_research_read(userInfo):
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -826,7 +831,7 @@ class WtMonSvr(WatcherSink):
                     "message": "回测管理器未配置"
                 }
             else:
-                if not self.__bt_mon__.has_strategy(user, straid):
+                if not self.__bt_mon__.has_strategy(user, straid, btid):
                     ret = {
                         "result": -2,
                         "message": "策略不存在"
@@ -895,7 +900,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in RESEARCH_ROLES:
+            if not can_research_read(userInfo):
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -915,7 +920,7 @@ class WtMonSvr(WatcherSink):
                     "message": "回测管理器未配置"
                 }
             else:
-                if not self.__bt_mon__.has_strategy(user, straid):
+                if not self.__bt_mon__.has_strategy(user, straid, btid):
                     ret = {
                         "result": -2,
                         "message": "策略不存在"
@@ -943,7 +948,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in RESEARCH_ROLES:
+            if not can_research_read(userInfo):
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -963,7 +968,7 @@ class WtMonSvr(WatcherSink):
                     "message": "回测管理器未配置"
                 }
             else:
-                if not self.__bt_mon__.has_strategy(user, straid):
+                if not self.__bt_mon__.has_strategy(user, straid, btid):
                     ret = {
                         "result": -2,
                         "message": "策略不存在"
@@ -991,7 +996,7 @@ class WtMonSvr(WatcherSink):
 
             user = userInfo["loginid"]
             role = userInfo["role"]
-            if role not in RESEARCH_ROLES:
+            if not can_research_read(userInfo):
                 ret = {
                     "result": -1,
                     "message": "没有权限"
@@ -1011,7 +1016,7 @@ class WtMonSvr(WatcherSink):
                     "message": "回测管理器未配置"
                 }
             else:
-                if not self.__bt_mon__.has_strategy(user, straid):
+                if not self.__bt_mon__.has_strategy(user, straid, btid):
                     ret = {
                         "result": -2,
                         "message": "策略不存在"
@@ -1115,11 +1120,17 @@ class WtMonSvr(WatcherSink):
             return ret
 
     def init_mgr_apis(self, app: FastAPI):
+        register_managed_routes(app, self.__data_mgr__, self._dog,
+                               lambda request, token: check_auth(request, token, self.__sec_key__), self.deploy_dir)
         register_strategy_routes(app, self.__data_mgr__, self._dog,
                                  lambda request, token: check_auth(request, token, self.__sec_key__))
         self.__risk_observer__ = register_risk_routes(app, self.__data_mgr__, self._dog,
                                  lambda request, token: check_auth(request, token, self.__sec_key__))
         register_channel_routes(app, self.__data_mgr__, self._dog,
+                                lambda request, token: check_auth(request, token, self.__sec_key__))
+        register_market_subscription_routes(app, self.__data_mgr__, self._dog,
+                                lambda request, token: check_auth(request, token, self.__sec_key__))
+        register_market_history_routes(app, self.__data_mgr__, self._dog,
                                 lambda request, token: check_auth(request, token, self.__sec_key__))
         register_trade_risk_routes(app, self.__data_mgr__,
                                    lambda request, token: check_auth(request, token, self.__sec_key__),
@@ -1128,6 +1139,11 @@ class WtMonSvr(WatcherSink):
         def control_app(appid, action, user, audit):
             try:
                 with channel_transition_lock:
+                    if action == "start":
+                        try:
+                            validate_managed_start(self.__data_mgr__, self._dog, appid)
+                        except (ValueError, OSError) as exc:
+                            return {"result": -3, "message": str(exc) if isinstance(exc, ValueError) else "已应用策略计划无法读取"}
                     getattr(self._dog, action)(appid)
             except Exception:
                 self.__data_mgr__.log_action(user, audit, json.dumps({"target": appid, "result": "failed"}))
@@ -1136,12 +1152,41 @@ class WtMonSvr(WatcherSink):
 
         '''下面是API接口的编写'''
 
+        @app.post("/mgr/access", tags=["用户接口"])
+        async def access_settings(request: Request):
+            return {"result": 0, "guest_enabled": app.state.guest_enabled,
+                    "public_read_only": request.headers.get("x-wt-public-read-only") == "1"}
+
+        @app.post("/mgr/guest", tags=["用户接口"])
+        async def guest_login(request: Request):
+            if not app.state.guest_enabled:
+                return {"result": -403, "message": "游客访问未启用"}
+            now = datetime.datetime.now()
+            request.session.clear()
+            request.session["tokeninfo"] = {
+                "loginid": "guest", "name": "游客", "role": "guest", "guest": True,
+                "products": [], "auth_version": app.state.auth_version,
+                "expiretime": (now + datetime.timedelta(hours=6)).strftime("%Y.%m.%d %H:%M:%S")}
+            return {"result": 0, "userinfo": {"loginid": "guest", "name": "游客", "role": "guest", "guest": True, "products": []}}
+
+        @app.post("/mgr/logout", tags=["用户接口"])
+        async def logout(request: Request):
+            info = request.session.get("tokeninfo", {})
+            if app.state.guest_enabled and info.get("role") != "guest" and info.get("loginid") == app.state.monitor_owner:
+                app.state.auth_version = secrets.token_urlsafe(24)
+            request.session.clear()
+            return {"result": 0, "message": "已退出登录"}
+
         @app.post("/mgr/login", tags=["用户接口"])
         async def cmd_login(
             request: Request,
             loginid: str = Body(..., title="用户名", embed=True),
             passwd: str = Body(..., title="用户密码", embed=True)
         ):
+            peer = request.client.host if request.client else "unknown"
+            if app.state.login_attempts.blocked(peer):
+                from starlette.responses import JSONResponse
+                return JSONResponse({"result": -429, "message": "登录尝试过多，请稍后再试"}, status_code=429, headers={"Retry-After": "600"})
             if True:
                 user = loginid
                 pwd = passwd
@@ -1155,7 +1200,7 @@ class WtMonSvr(WatcherSink):
                     encpwd = hashlib.md5((user + pwd).encode("utf-8")).hexdigest()
                     now = datetime.datetime.now()
                     usrInf = self.__data_mgr__.get_user(user)
-                    if usrInf is None or encpwd != usrInf["passwd"]:
+                    if usrInf is None or not secrets.compare_digest(encpwd, usrInf["passwd"]) or (app.state.guest_enabled and user != app.state.monitor_owner):
                         ret = {
                             "result": -1,
                             "message": "用户名或密码错误"
@@ -1175,6 +1220,8 @@ class WtMonSvr(WatcherSink):
                             "products": products,
                             "loginip": request.client.host
                         }
+                        request.session.clear()
+                        tokenInfo["auth_version"] = app.state.auth_version
                         set_session(request, "tokeninfo", tokenInfo)
 
                         if self.__token_enabled__:
@@ -1201,6 +1248,7 @@ class WtMonSvr(WatcherSink):
                 if get_session(request, "userinfo") is not None:
                     pop_session("userinfo")
 
+            app.state.login_attempts.record(peer, ret.get("result") == 0)
             return ret
 
         @app.post("/mgr/session", tags=["用户接口"])
@@ -1208,6 +1256,8 @@ class WtMonSvr(WatcherSink):
             success, info = check_auth(request, None, self.__sec_key__)
             if not success:
                 return {"result": -9999, "message": "登录已过期"}
+            if info.get("role") == "guest":
+                return {"result": 0, "userinfo": {"loginid": "guest", "name": "游客", "role": "guest", "guest": True, "products": []}}
             user = self.__data_mgr__.get_user(info["loginid"])
             if user is None:
                 return {"result": -9999, "message": "用户不存在"}
@@ -1258,6 +1308,7 @@ class WtMonSvr(WatcherSink):
 
                         newencpwd = hashlib.md5((user + newpwd).encode("utf-8")).hexdigest()
                         self.__data_mgr__.mod_user_pwd(user, newencpwd, user)
+                        app.state.auth_version = secrets.token_urlsafe(24)
 
                         ret = {
                             "result": 0,
@@ -1484,7 +1535,9 @@ class WtMonSvr(WatcherSink):
                 }
             else:
                 if not self._dog.isRunning(grpid):
-                    await asyncio.to_thread(control_app, grpid, "start", adminInfo, "startgrp")
+                    failure = await asyncio.to_thread(control_app, grpid, "start", adminInfo, "startgrp")
+                    if failure:
+                        return failure
                 ret = {
                     "result": 0,
                     "message": "Ok"
@@ -2232,6 +2285,8 @@ class WtMonSvr(WatcherSink):
                 products: list = Body([], title="产品列表", embed=True),
                 remark: str = Body("", title="备注信息", embed=True)
         ):
+            if app.state.guest_enabled:
+                return {"result": -403, "message": "该工作台仅保留所有者账户，不提供账户创建或删除"}
             bSucc, adminInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return adminInfo
@@ -2269,6 +2324,8 @@ class WtMonSvr(WatcherSink):
                 token: str = Body(None, title="访问令牌", embed=True),
                 loginid: str = Body(..., title="用户名", embed=True)
         ):
+            if app.state.guest_enabled:
+                return {"result": -403, "message": "该工作台仅保留所有者账户，不提供账户创建或删除"}
             bSucc, adminInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
                 return adminInfo
@@ -2318,6 +2375,7 @@ class WtMonSvr(WatcherSink):
                     }
                 else:
                     self.__data_mgr__.mod_user_pwd(user, encpwd, adminInfo["loginid"])
+                    app.state.auth_version = secrets.token_urlsafe(24)
                     self.__data_mgr__.log_action(adminInfo, "resetpwd", loginid)
                     ret = {
                         "result": 0,
@@ -2406,7 +2464,9 @@ class WtMonSvr(WatcherSink):
                 }
             else:
                 if not self._dog.isRunning(appid):
-                    await asyncio.to_thread(control_app, appid, "start", adminInfo, "startapp")
+                    failure = await asyncio.to_thread(control_app, appid, "start", adminInfo, "startapp")
+                    if failure:
+                        return failure
                 ret = {
                     "result": 0,
                     "message": "Ok"
@@ -2770,6 +2830,10 @@ class WtMonSvr(WatcherSink):
                 }
 
     def init_comm_apis(self, app: FastAPI):
+        @app.get("/")
+        async def root_entry():
+            return RedirectResponse("/console/")
+
         @app.get("/console")
         async def console_entry():
             return RedirectResponse("/console/index.html")

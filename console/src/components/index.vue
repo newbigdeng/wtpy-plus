@@ -20,7 +20,7 @@
                     <button class="wt-avatar" aria-label="账户菜单">{{(cache.userinfo.name || cache.loginid || 'W').slice(0,1).toUpperCase()}}</button>
                     <template #dropdown><el-dropdown-menu class="wt-account-menu">
                         <div class="wt-account-info"><strong>{{cache.userinfo.name || cache.loginid}}</strong><span>{{cache.loginid}} · {{roleName}}</span><small>{{cache.userinfo.logintime}} {{cache.userinfo.loginip}}</small></div>
-                        <el-dropdown-item v-if="isAdmin" command="admins">用户管理</el-dropdown-item><el-dropdown-item command="config">组合配置</el-dropdown-item><el-dropdown-item command="concepts">概念说明</el-dropdown-item><el-dropdown-item command="theme-light" divided>白色主题</el-dropdown-item><el-dropdown-item command="theme-dark">黑色主题</el-dropdown-item><el-dropdown-item command="theme-system">跟随系统主题</el-dropdown-item><el-dropdown-item command="password" divided><WtIcon name="settings"/>修改密码</el-dropdown-item>
+                        <el-dropdown-item v-if="isAdmin || isGuest" command="admins">用户管理</el-dropdown-item><el-dropdown-item command="config">组合配置</el-dropdown-item><el-dropdown-item command="concepts">概念说明</el-dropdown-item><el-dropdown-item command="theme-light" divided>白色主题</el-dropdown-item><el-dropdown-item command="theme-dark">黑色主题</el-dropdown-item><el-dropdown-item command="theme-system">跟随系统主题</el-dropdown-item><el-dropdown-item command="password" divided><WtIcon name="settings"/>修改密码</el-dropdown-item>
                         <el-dropdown-item command="logout" divided><WtIcon name="logout"/>注销登录</el-dropdown-item>
                     </el-dropdown-menu></template>
                 </el-dropdown>
@@ -100,12 +100,13 @@ export default {
         filteredCommandGroups(){return this.commandGroups.filter(item=>(item.name+' '+item.id).toLowerCase().includes(this.commandQuery.toLowerCase()))},
         theme(){return themeState.value},
         canOperate(){return ['operator','trader','admin','superman'].includes(this.cache.userinfo?.role)},
-        roleName(){return {viewer:'只读',operator:'操作员',trader:'交易员',risker:'风控员',researcher:'研究员',admin:'管理员',superman:'超级管理员'}[this.cache.userinfo?.role]||'用户'},
+        isGuest(){return this.cache.userinfo?.role==='guest'},
+        roleName(){return {guest:'游客 · 只读',viewer:'只读',operator:'操作员',trader:'交易员',risker:'风控员',researcher:'研究员',admin:'管理员',superman:'超级管理员'}[this.cache.userinfo?.role]||'用户'},
         navItems() {
             return [
-                {path:'/monitor',icon:'monitor',label:'监控中心',hint:'组合、通道与实时事件',show:!this.isResearcher || this.isAdmin},
-                {path:'/schedule',icon:'schedule',label:'调度中心',hint:'进程与计划任务',show:this.isAdmin},
-                {path:'/backtest',icon:'backtest',label:'在线回测',hint:'策略研究与历史检验',show:this.isResearcher || this.isAdmin},
+                {path:'/monitor',icon:'monitor',label:'监控中心',hint:'组合、通道与实时事件',show:this.isGuest || !this.isResearcher || this.isAdmin},
+                {path:'/schedule',icon:'schedule',label:'调度中心',hint:'进程与计划任务',show:this.isGuest || this.isAdmin},
+                {path:'/backtest',icon:'backtest',label:'在线回测',hint:'策略研究与历史检验',show:this.isGuest || this.isResearcher || this.isAdmin},
             ].filter(item=>item.show)
         },
         currentPage() { return this.navItems.find(item=>item.path===this.$route.path) || (this.$route.path==='/admins'?{label:'用户管理',hint:'账户与访问权限'}:null) || (this.$route.path==='/api-manual'?{label:'API 手册',hint:'当前版本 Python 策略接口'}:{label:'工作台',hint:''}) },
@@ -168,6 +169,7 @@ export default {
                 cancelButtonText: '取消',
                 type: 'warning'
             }).then(() => {
+                this.$api.logout(()=>{});
                 useSessionStore().logoutok();
                 this.$push.disconnect();
 
@@ -177,6 +179,7 @@ export default {
             });
         },
         onModPwd: function(e){
+            if(this.isGuest){this.$message.warning("游客模式不支持操作");return;}
             this.showDlgModPwd = true;
         },
         doModPwd: function(){

@@ -112,6 +112,7 @@ class WorkbenchFeed:
             raise ValueError("开始日期不能晚于结束日期")
         folder=Path(group["path"]).resolve()
         cfg=load_config(folder)
+        replay=cfg.get("monitor",{}).get("market_mode")=="simnow_replay"
         store=cfg.get("data",{}).get("store",{}).get("path")
         bases=cfg.get("basefiles",{})
         if not store:
@@ -125,11 +126,16 @@ class WorkbenchFeed:
         contracts=base_json("contract")
         commodities=base_json("commodity")
         available=set()
+        freshness={}
         for directory in ("rt/min1","rt/min5","his/min1","his/min5","his/day"):
             base=storage/directory
             if base.is_dir():
                 for f in base.glob("*/*"):
-                    if f.suffix in (".dmb",".dsb"):available.add((f.parent.name,f.stem))
+                    if f.suffix in (".dmb",".dsb"):
+                        identity=(f.parent.name,f.stem)
+                        available.add(identity)
+                        if directory.startswith("rt/"):
+                            freshness[identity]=max(freshness.get(identity,0),f.stat().st_mtime_ns)
         catalog=[]
         for exchange, items in contracts.items():
             for ticker, info in items.items():
@@ -138,7 +144,9 @@ class WorkbenchFeed:
                 commodity=commodities.get(exchange,{}).get(product,{})
                 catalog.append({"code":standard,"ticker":ticker,"exchange":exchange,"product":product,"name":info.get("name",ticker),"price_tick":commodity.get("pricetick"),"volume_scale":commodity.get("volscale"),"session":commodity.get("session"),"holiday":commodity.get("holiday"),"expire_date":info.get("expiredate"),"long_margin_ratio":info.get("longmarginratio"),"short_margin_ratio":info.get("shortmarginratio"),"available":(exchange,ticker) in available})
         catalog.sort(key=lambda item:(not item["available"],item["code"]))
-        selected=next((item for item in catalog if code in (item["code"],item["exchange"]+"."+item["ticker"])),None) if code else next((item for item in catalog if item["available"]),catalog[0] if catalog else None)
+        if replay:
+            for item in catalog:item["name"]+=" · 回放（本地接收时间）"
+        selected=next((item for item in catalog if code in (item["code"],item["exchange"]+"."+item["ticker"])),None) if code else max((item for item in catalog if item["available"]),key=lambda item:freshness.get((item["exchange"],item["ticker"]),0),default=catalog[0] if catalog else None)
         if selected is None:
             return {"contracts":catalog if include_catalog else None,"bars":[],"quote":None,"code":code,"period":period,"market_message":"没有可读取的合约；请先让数据中台订阅合约","source":"组合 data.store"}
         exchange,ticker=selected["exchange"],selected["ticker"]
@@ -163,23 +171,33 @@ class WorkbenchFeed:
             from .MarketSessions import session_status
             market.update(session_status(selected,base_json("session"),base_json("holiday")))
             return market
-    def account_series(self, groupid, accounts):
-        target=self.history_root/(quote(groupid,safe="")+".json")
+    def account_series(self, groupid, accounts, group_path):
+        target=self.history_root/quote(groupid,safe="")/(quote(str(Path(group_path).resolve()),safe="")+".json")
         with self._account_lock:
-            try:stored=json.loads(target.read_text())
-            except (FileNotFoundError,json.JSONDecodeError):stored={}
-            changed=False
+            try:document=json.loads(target.read_text())
+            except (FileNotFoundError,json.JSONDecodeError):document={}
+            # Earlier samples used balance alone. Keep them, but do not label
+            # those amounts as dynamic equity without the missing floating PnL.
+            migrated=bool(document) and document.get("schema")!=2
+            if document.get("schema")!=2:
+                document={"schema":2,"accounts":{},"legacy_balance":document}
+            stored=document["accounts"]
+            changed=migrated
             for account in accounts:
                 key=account["channel"]+":"+account["currency"]
                 series=stored.setdefault(key,[])
-                if account.get("updated_at") and (not series or series[-1]["time"]!=account["updated_at"]):
-                    series.append({"time":account["updated_at"],"equity":account.get("balance"),"available":account.get("available"),"margin":account.get("margin")})
+                timestamp=account.get("updated_at")
+                equity=account.get("equity")
+                if account.get("timestamp_source")=="柜台查询回执时间" and (account.get("age_seconds") or 0)>=-1 and isinstance(equity,(int,float)) and math.isfinite(equity) and timestamp and (not series or series[-1]["time"]<timestamp):
+                    series.append({"time":timestamp,"equity":equity,"available":account.get("available"),"margin":account.get("margin")})
                     stored[key]=series[-10000:];changed=True
                 account["history"]=stored[key]
+                account["history_limit"]=10000
+                account["legacy_balance_samples"]=len(document.get("legacy_balance",{}).get(key,[]))
             if changed:
                 target.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
                 temp=target.with_suffix(".next")
-                temp.write_text(json.dumps(finite(stored)))
+                temp.write_text(json.dumps(finite(document)))
                 temp.chmod(0o600);temp.replace(target)
         return accounts
 
@@ -211,27 +229,16 @@ def install_workbench_api(server, check_auth):
         try:
             market=await asyncio.to_thread(feed.market,group,code,period,count,include_catalog,start_date,end_date)
             channel_ids=manager.get_channels(groupid) or []
-            accounts=[]
-            channels=manager.get_channel_funds(groupid,"all") or {}
-            for channel,funds in channels.items():
-                path=Path(group["path"])/"generated/traders"/channel/"rtdata.json"
-                updated=int(path.stat().st_mtime*1000) if path.is_file() else None
-                if isinstance(funds,dict):
-                    values=[(funds.get("currency"),funds)] if "balance" in funds else list(funds.items())
-                else:
-                    values=[(fund.get("currency") if isinstance(fund,dict) else None,fund) for fund in funds]
-                for index,(currency,fund) in enumerate(values):
-                    if not isinstance(fund,dict):continue
-                    currency=str(currency or fund.get("currency") or ("UNKNOWN-"+str(index)))
-                    accounts.append({"channel":channel,"currency":currency,"balance":fund.get("balance"),"available":fund.get("available"),"margin":fund.get("margin"),"closeprofit":fund.get("closeprofit"),"dynprofit":fund.get("dynprofit"),"fee":fund.get("commission",fund.get("fee")),"updated_at":updated})
-            if user.get("role") not in ("superman","admin"):accounts=[]
-            await asyncio.to_thread(feed.account_series,groupid,accounts)
+            from .TradeRiskApi import trade_risk_snapshot
+            accounts=(await asyncio.to_thread(trade_risk_snapshot,group,channel_ids,"",running=server._dog.isRunning(groupid)))["accounts"]
+            if user.get("role") not in ("superman","admin","guest"):accounts=[]
+            await asyncio.to_thread(feed.account_series,groupid,accounts,group["path"])
             trades=[];orders=[]
             for channel in channel_ids:
                 trades.extend(manager.get_channel_trades(groupid,channel,limit=500))
                 orders.extend(manager.get_channel_orders(groupid,channel,limit=500))
             funds=manager.get_group_funds(groupid)
             equity=[{"time":int(row["date"]),"pnl":float(row.get("balance",0))+float(row.get("dynprofit",0))} for row in funds]
-            return finite({"result":0,"message":"OK","market":market,"running":server._dog.isRunning(groupid),"positions":manager.get_channel_positions(groupid,"all"),"trades":sorted(trades,key=lambda row:row.get("time",0))[-1000:],"orders":sorted(orders,key=lambda row:row.get("time",0))[-1000:],"portfolio_positions":manager.get_group_positions(groupid),"equity":equity,"equity_kind":"组合净损益，不含默认本金","accounts":accounts,"account_history_kind":"仅采样已读取的柜台快照，不代表完整历史","read_only":True})
+            return finite({"result":0,"message":"OK","market":market,"running":server._dog.isRunning(groupid),"positions":manager.get_channel_positions(groupid,"all"),"trades":sorted(trades,key=lambda row:row.get("time",0))[-1000:],"orders":sorted(orders,key=lambda row:row.get("time",0))[-1000:],"portfolio_positions":manager.get_group_positions(groupid),"equity":equity,"equity_kind":"组合净损益，不含默认本金","accounts":accounts,"account_history_kind":"仅保存已读取的柜台回执；动态权益=balance+dynprofit，同一回执不重复采样","read_only":True})
         except (ValueError,TypeError,KeyError,OSError) as exc:
             return {"result":-1,"message":"交易工作台读取失败："+str(exc)}

@@ -91,6 +91,8 @@ def switch_profile(data_mgr, dog, groupid, profile, profiles):
         old_app = deepcopy(dog.getAppConf(groupid))
         if not old_app:
             raise ValueError("组合尚未登记启动配置")
+        if "run_managed.py" in old_app.get("param", ""):
+            raise ValueError("页面管理组合请在策略计划中选择交易通道；切换独立环境请从目标环境模板新建组合")
         if old_app.get("guard") or old_app.get("schedule", {}).get("active"):
             raise ValueError("请先关闭组合的进程守护和自动调度")
         target_run = root / "run"

@@ -24,13 +24,17 @@
                     <el-button v-if="isAdmin" size="small" @click="handleClickSchedule">调度</el-button>
                     <el-dropdown trigger="click" @command="handleGrpCmd"><el-button size="small" aria-label="组合管理">管理<WtIcon name="down"/></el-button><template #dropdown><el-dropdown-menu>
                         <el-dropdown-item command="addgrp">添加组合</el-dropdown-item>
+                        <el-dropdown-item command="registergrp">登记已有运行目录</el-dropdown-item>
                         <el-dropdown-item v-if="isAdmin" command="renamegrp">重命名组合</el-dropdown-item>
                         <el-dropdown-item command="delgrp">删除组合</el-dropdown-item>
                     </el-dropdown-menu></template></el-dropdown>
                 </div>
             </header>
-            <div class="wt-group-content"><Empty v-if="!curGroup" @create="handleGrpCmd('addgrp')"/><Group v-else ref="group" :key="curGroup.id+':'+profileVersion" :groupinfo="curGroup" @profile-changed="handleProfileChanged" @overview="updateOverview"/></div>
+            <div class="wt-group-content"><Empty v-if="!curGroup" @create="handleGrpCmd('addgrp')"/><Group v-else ref="group" :key="curGroup.id+':'+profileVersion" :groupinfo="curGroup" @profile-changed="handleProfileChanged" @plan-changed="handlePlanChanged" @overview="updateOverview"/></div>
         </section>
+        <el-dialog v-model="showManagedGroup" title="新建 Python 策略组合" width="min(780px, 94vw)" :close-on-click-modal="false" destroy-on-close>
+            <ManagedStrategies v-if="showManagedGroup" create @created="handleManagedCreated" @cancel="showManagedGroup=false"/>
+        </el-dialog>
         <el-drawer
             title="计划任务"
             :with-header="false"
@@ -136,7 +140,7 @@
                 </el-col>
             </el-row>
             <template #footer><span class="dialog-footer">
-                <el-button type="primary" plain size="small" v-show="!addGroup && !editGroup" @click="editGroup=true"><i class="el-icon-edit"></i>编辑</el-button>
+                <el-button type="primary" plain size="small" v-show="!addGroup && !editGroup" @click="beginGroupEdit"><i class="el-icon-edit"></i>编辑</el-button>
                 <el-button type="primary" @click="onCommitGroup()" plain size="small" ><i class="el-icon-thumb"></i>提交</el-button>
             </span></template>
         </el-dialog>
@@ -154,6 +158,7 @@ import ResizableDivider from '../common/ResizableDivider.vue'
 import Group from './group.vue'
 import Empty from './empty.vue'
 import Schedule from '../common/moncfg.vue'
+import ManagedStrategies from './ManagedStrategies.vue'
 
 export default {
     name: 'monitor',
@@ -184,7 +189,7 @@ export default {
         }
     },
     components: {
-        Group, Empty, Schedule, WtIcon, ResizableDivider, ProcessControl
+        Group, Empty, Schedule, WtIcon, ResizableDivider, ProcessControl, ManagedStrategies
     },
     data () {
         return {
@@ -198,6 +203,7 @@ export default {
             groupSummaries:{},
             sidebarWidth: 248,
             schedule: false,
+            showManagedGroup: false,
             baseinfo: false,
             showgrpdlg: false,
             curGroup: null,
@@ -265,6 +271,10 @@ export default {
         }
     },
     methods: {
+        permitGroupWrite(){if(this.cache.userinfo?.role==='guest'){this.$message.warning('游客模式不支持操作');return false}if(!this.isAdmin){this.$message.warning('仅管理员可以修改组合');return false}return true},
+        beginGroupEdit(){if(this.permitGroupWrite())this.editGroup=true},
+        handlePlanChanged(){if(this.curGroup)delete this.monitors[this.curGroup.id];this.refreshProcesses()},
+        handleManagedCreated(value){this.showManagedGroup=false;this.$api.getGroups(result=>{if(result.result<0){this.$message.error(result.message);return}this.groups=result.groups||[];this.handleTabSel(value.groupid);this.$router.replace({query:{...this.$route.query,group:value.groupid,tab:'runtime'}})})},
         updateOverview(summary){this.groupSummaries[summary.groupid]=summary.text},
         onViewport(){const narrow=window.innerWidth<=1360;if(narrow&&!this.narrow)this.sidebarOpen=false;this.narrow=narrow;},
         refreshProcesses(){this.$api.getGroups(result=>{if(result.result<0){this.$message.error(result.message);return;}for(const group of this.groups){const current=result.groups?.find(row=>row.id===group.id);if(current)Object.assign(group,current)}})},
@@ -410,6 +420,12 @@ export default {
             let self = this;
             if(cmdid == "renamegrp"){this.renameGroup();return;}
             if(cmdid == "addgrp"){
+                if(!this.permitGroupWrite())return;
+                this.showManagedGroup=true;
+                return;
+            }
+            if(!this.permitGroupWrite())return;
+            if(cmdid == "registergrp"){
                 this.copyGroup = {
                     id:"",
                     name:"",
@@ -457,6 +473,7 @@ export default {
             }
         },
         onCommitGroup: function(){
+            if(!this.permitGroupWrite())return;
             let self = this;
             let grpInfo = this.copyGroup;
             this.$api.commitGroup(grpInfo, this.addGroup?"add":"mod", (resObj)=>{

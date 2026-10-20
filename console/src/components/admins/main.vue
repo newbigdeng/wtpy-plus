@@ -198,6 +198,7 @@
 </template>
 
 <script>
+import {useSessionStore} from "@/store.js";
 export default {
     name: 'UserManagement',
     data() {
@@ -265,6 +266,7 @@ export default {
             });
         },
         handleUserCmd: function(command){
+                if(useSessionStore().cache.userinfo?.role==='guest' && command!=='refresh'){this.$message.warning('游客模式不支持操作');return;}
             if(command == 'add'){
                 this.curUser = {
                     loginid:"",

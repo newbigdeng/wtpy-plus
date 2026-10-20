@@ -3,6 +3,9 @@ from .WtLogger import WtLogger
 import asyncio
 import json
 import threading
+import datetime
+from .Roles import group_allowed
+from .GuestAccess import guest_session_valid, guest_data
 
 
 class PushServer:
@@ -46,12 +49,34 @@ class PushServer:
         self.active_connections.clear()
         self._loop = None
 
+    @staticmethod
+    def authorized(ws):
+        info = ws.session.get("tokeninfo") or {}
+        if info.get("role") == "guest":
+            return guest_session_valid(ws.scope)
+        state = ws.app.state
+        if getattr(state, "guest_enabled", False):
+            return (info.get("loginid") == state.monitor_owner
+                    and info.get("auth_version") == state.auth_version
+                    and info.get("expiretime", "") > datetime.datetime.now().strftime("%Y.%m.%d %H:%M:%S")
+                    and not any(key.lower() == b"x-wt-public-read-only" and value == b"1" for key, value in ws.scope.get("headers", [])))
+        return bool(info) and info.get("expiretime", "") > datetime.datetime.now().strftime("%Y.%m.%d %H:%M:%S")
+
     async def connect(self, ws: WebSocket):
+        if not self.authorized(ws):
+            await ws.close(code=1008)
+            return False
+        origin = ws.headers.get("origin")
+        if origin:
+            from urllib.parse import urlsplit
+            if urlsplit(origin).netloc != ws.headers.get("host"):
+                await ws.close(code=1008)
+                return False
         await ws.accept()
-        if ws.session.get("tokeninfo") is not None:
-            self.active_connections.append(ws)
-            if self.logger:
-                self.logger.info(f"{ws.session['tokeninfo']['loginid']} connected")
+        self.active_connections.append(ws)
+        if self.logger:
+            self.logger.info(f"{ws.session['tokeninfo']['loginid']} connected")
+        return True
 
     def disconnect(self, ws: WebSocket):
         if ws in self.active_connections:
@@ -64,9 +89,24 @@ class PushServer:
         await ws.send_json(data)
 
     async def _broadcast(self, data: dict, groupid: str = ""):
+        groupid = groupid or data.get("groupid", "")
         async def send(ws):
             try:
-                await asyncio.wait_for(ws.send_json(data), timeout=5)
+                if not self.authorized(ws):
+                    self.disconnect(ws)
+                    await ws.close(code=1008)
+                    return
+                info = ws.session["tokeninfo"]
+                if groupid and not group_allowed(info, groupid):
+                    return
+                if info.get("role") == "guest":
+                    if data.get("type") != "gpevt":
+                        return
+                    payload = {"type": "gpevt", "groupid": data.get("groupid", ""),
+                               "evttype": data.get("evttype") if data.get("evttype") in ("start", "stop") else "updated"}
+                else:
+                    payload = data
+                await asyncio.wait_for(ws.send_json(payload), timeout=5)
             except (RuntimeError, WebSocketDisconnect, OSError, TimeoutError):
                 self.disconnect(ws)
         recipients = [ws for ws in list(self.active_connections)
@@ -92,21 +132,30 @@ class PushServer:
     def on_subscribe_group(self, ws: WebSocket, data: dict):
         if ws not in self.active_connections or "groupid" not in data:
             return
+        if not group_allowed(ws.session["tokeninfo"], data["groupid"]):
+            return
         ws.session["groupid"] = data["groupid"]
         if self.logger:
             token = ws.session["tokeninfo"]
-            self.logger.info("{}@{} subscribed group {}".format(token["loginid"], token["loginip"], data["groupid"]))
+            self.logger.info("{}@{} subscribed group {}".format(token["loginid"], token.get("loginip", "guest"), data["groupid"]))
 
     def run(self):
         if self._registered:
             return
         @self.app.websocket("/")
         async def ws_listen(ws: WebSocket):
-            await self.connect(ws)
+            if not await self.connect(ws):
+                return
             try:
                 while True:
                     try:
-                        req = json.loads(await ws.receive_text())
+                        raw = await ws.receive_text()
+                        if len(raw) > 4096 or not self.authorized(ws):
+                            await ws.close(code=1008)
+                            break
+                        req = json.loads(raw)
+                        if not isinstance(req, dict):
+                            continue
                         if req.get("type") == "subscribe":
                             self.on_subscribe_group(ws, req)
                             await self.send_personal_message(req, ws)

@@ -6,6 +6,8 @@ import datetime
 import json
 import copy
 import platform
+import shlex
+from pathlib import Path
 import psutil
 
 from .EventReceiver import EventReceiver, EventSink
@@ -485,6 +487,35 @@ class WatchDog:
 
         appInfo = self.__apps__[appid]
         return appInfo.isRunning()
+
+    def is_process_running(self, appid: str):
+        """Refresh OS process identity for stopped-only configuration changes."""
+        if appid not in self.__apps__:
+            raise ValueError("组合缺少调度启动配置")
+        app = self.__apps__[appid]
+        with app._lock:
+            if app._state == AppState.AS_Closing:
+                return True
+            if app._process is not None and app._process.poll() is None:
+                return True
+            conf = app.__info__
+            arguments = shlex.split(conf["param"])
+            script = next((Path(value) for value in arguments if value.endswith(".py")), None)
+            expected = (Path(conf["folder"]) / script).resolve() if script else None
+            for process in psutil.process_iter(["cmdline", "cwd"]):
+                try:
+                    command = process.info["cmdline"] or []
+                    if " ".join(command) == app.cmd_line:
+                        return True
+                    # A manually launched Python entry may omit -u or use a
+                    # relative filename. Closed scheduler state is not proof.
+                    if expected and command and "python" in Path(command[0]).name.lower():
+                        for value in command[1:]:
+                            if value.endswith(".py") and (Path(process.info["cwd"]) / value).resolve() == expected:
+                                return True
+                except (psutil.NoSuchProcess, psutil.AccessDenied, OSError, TypeError):
+                    continue
+            return False
 
     def getAppConf(self, appid:str):
         if appid not in self.__apps__:

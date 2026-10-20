@@ -179,7 +179,7 @@ def register_trade_risk_routes(app, data_mgr, check_auth, dog=None):
                 if not capable:
                     return {"result":-2,"message":"当前运行程序不支持柜台查询桥，请升级后重启组合"}
                 requested=int(time.time()*1000)
-                revision=max(requested,int(status.get("query_fund",{}).get("revision",0))+1)
+                revision=str(time.time_ns())
                 atomic_json(folder/"query-fund.json",dict(revision=revision,channel=channel,requested_at=requested,expires_at=requested+15000))
                 result={"result":-3,"message":"柜台查询回执超时；当前资金仍不可确认","accepted":False,"refreshed":False}
                 deadline=time.monotonic()+12
@@ -189,7 +189,7 @@ def register_trade_risk_routes(app, data_mgr, check_auth, dog=None):
                         status=json.loads(status_path.read_text(encoding="utf-8-sig"))
                     except (OSError,ValueError):
                         continue
-                    ack=status.get("query_fund",{})
+                    ack=status.get("query_fund") or {}
                     if ack.get("revision")!=revision:continue
                     if not ack.get("accepted"):
                         result.update(message="柜台查询未发出："+str(ack.get("error") or "通道未就绪"))

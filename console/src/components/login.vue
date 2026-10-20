@@ -5,7 +5,7 @@
             <div class="wt-login-eyebrow">YOUR QUANT WORKSPACE</div>
             <h1>回到你的交易工作台</h1>
             <p>研究、监控与执行，在同一个空间。</p>
-            <form @submit.prevent="doLogin">
+            <form v-if="!publicReadOnly" @submit.prevent="doLogin">
                 <label for="wt-login-id">账户</label>
                 <el-input id="wt-login-id" v-model="loginid" placeholder="用户名" autocomplete="username" size="large" required/>
                 <label for="wt-login-password">密码</label>
@@ -13,7 +13,8 @@
                 <el-checkbox v-model="saveuser">保存用户名</el-checkbox>
                 <el-button native-type="submit" type="primary" :loading="loading" size="large">登 录<span class="wt-login-arrow">→</span></el-button>
             </form>
-            <div class="wt-login-note">连接到你的 WonderTrader 监控服务</div>
+            <el-button v-if="guestEnabled" class="wt-guest-login" size="large" :loading="loading" @click="doGuestLogin">游客登录 · 只读浏览</el-button>
+            <div class="wt-login-note">{{publicReadOnly?'公开页面仅供浏览，管理员通过 SSH 连接工作台':'连接到你的 WonderTrader 监控服务'}}</div>
         </main>
         <footer>WONDERTRADER PLUS <span>量化研究 · 实时监控</span></footer>
     </div>
@@ -28,10 +29,23 @@ export default {
             loginid: "",
             passwd: "",
             saveuser:true,
+            publicReadOnly: false,
+            guestEnabled: false,
             loading: false
         };
     },
     methods: {
+        doGuestLogin() {
+            if(this.loading) return;
+            this.loading=true;
+            this.$api.guestLogin(result=>{
+                this.loading=false;
+                if(result.result!==0){this.$message.warning(result.message);return;}
+                useSessionStore().loginok({userinfo:result.userinfo,loginid:'guest'});
+                this.$push.connect();
+                this.$router.push('/monitor');
+            });
+        },
         doLogin: function () {
             if(this.loading) return;
             let self = this;
@@ -62,6 +76,7 @@ export default {
         },
     },
     mounted() {
+        this.$api.accessSettings(result=>{this.guestEnabled=result.guest_enabled===true;this.publicReadOnly=result.public_read_only===true});
         this.saveuser = localStorage.getItem("save_user") == 'true';
         if(this.saveuser)
             this.loginid = localStorage.getItem("last_user");
@@ -88,6 +103,7 @@ form .el-checkbox{margin:1px 0 12px;}
 form :deep(.el-checkbox__label){font-size:12px;color:#7a8472;}
 form .el-button{margin:0;height:44px;border-radius:8px;font-size:13px;}
 .wt-login-arrow{margin-left:auto;font-size:17px;}
+.wt-guest-login{width:100%;margin:14px 0 0;border-radius:8px;}
 .wt-login-note{text-align:center;font-size:11px;color:#9b9f94;margin-top:24px;}
 footer{align-self:stretch;display:flex;justify-content:space-between;color:#9b9f94;font-size:10px;letter-spacing:1.2px;}
 footer span{letter-spacing:.5px;}

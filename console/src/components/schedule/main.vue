@@ -16,6 +16,7 @@
 </template>
 
 <script>
+import {useSessionStore} from "@/store.js";
 import MoniforCfg from '../common/moncfg.vue'
 import ProcessControl from '../common/ProcessControl.vue'
 export default {
@@ -196,6 +197,7 @@ export default {
             });
         },
         handleAppCommand: function(command){
+            if(useSessionStore().cache.userinfo?.role==='guest'){this.$message.warning('游客模式不支持操作');return;}
             let self = this;
             if(command == 'add'){
                 this.resetConf();

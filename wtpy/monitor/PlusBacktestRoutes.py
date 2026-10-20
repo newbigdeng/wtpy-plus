@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from fastapi import Body, Request
-from .Roles import RESEARCH_ROLES
+from .Roles import RESEARCH_ROLES, can_research_read
 
 
 def register_plus_routes(app, bt_mon, check_auth, manager=None):
@@ -10,11 +10,11 @@ def register_plus_routes(app, bt_mon, check_auth, manager=None):
         from .PlusBacktest import PlusBacktestManager
         manager = PlusBacktestManager(str(Path(bt_mon.path) / "_plus"))
 
-    def authorize(request, token):
+    def authorize(request, token, read=False):
         authenticated, user = check_auth(request, token)
         if not authenticated:
             return None, user
-        if user.get("role") not in RESEARCH_ROLES:
+        if not (can_research_read(user) if read else user.get("role") in RESEARCH_ROLES):
             return None, {"result": -403, "message": "需要策略研究权限"}
         return user, None
 
@@ -23,7 +23,7 @@ def register_plus_routes(app, bt_mon, check_auth, manager=None):
 
     @app.post("/bt/plus/capabilities", tags=["Plus 仿真回测"])
     def capabilities(request: Request, token: str = Body(None, embed=True)):
-        _, error = authorize(request, token)
+        _, error = authorize(request, token, read=True)
         if error:
             return error
         return {"result": 0, "message": "OK", **manager.capabilities()}
@@ -64,7 +64,7 @@ def register_plus_routes(app, bt_mon, check_auth, manager=None):
     @app.post("/bt/plus/list", tags=["Plus 仿真回测"])
     def tasks(request: Request, straid: str = Body(None, embed=True),
               token: str = Body(None, embed=True)):
-        user, error = authorize(request, token)
+        user, error = authorize(request, token, read=True)
         if error:
             return error
         if straid is not None and not bt_mon.has_strategy(user["loginid"], straid):
@@ -74,7 +74,7 @@ def register_plus_routes(app, bt_mon, check_auth, manager=None):
     @app.post("/bt/plus/detail", tags=["Plus 仿真回测"])
     def detail(request: Request, taskid: str = Body(..., embed=True),
                token: str = Body(None, embed=True)):
-        user, error = authorize(request, token)
+        user, error = authorize(request, token, read=True)
         if error:
             return error
         try:

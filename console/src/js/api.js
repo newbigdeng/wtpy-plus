@@ -2,7 +2,7 @@ import $ from 'jquery'
 // Existing endpoints accept JSON. Always call their callback on network/HTTP failure.
 $.post = (url, data, callback) => $.ajax({
   url, type: 'POST', data, contentType: 'application/json', dataType: 'json'
-}).done(value => callback(value, 'success')).fail(xhr => callback({ result: -9999, message: xhr.responseJSON?.message || xhr.responseJSON?.detail?.[0]?.msg || '网络请求失败 (' + xhr.status + ')' }, 'success'))
+}).done(value => callback(value, 'success')).fail(xhr => callback({ ...xhr.responseJSON, result: xhr.responseJSON?.result ?? -9999, message: xhr.responseJSON?.message || xhr.responseJSON?.detail?.[0]?.msg || '网络请求失败 (' + xhr.status + ')' }, 'success'))
 
 
 import { md5 } from 'js-md5'
@@ -97,6 +97,10 @@ export default function () {
 
 	///////////////////////////////////////////////////////
 	//接口相关
+
+    self.guestLogin = cb => $.post('/mgr/guest', '{}', cb);
+    self.accessSettings = cb => $.post('/mgr/access', '{}', cb);
+    self.logout = cb => $.post('/mgr/logout', '{}', cb);
 
 	self.login = function (loginid, pwd, cb) {
 		let reqInfo = {
