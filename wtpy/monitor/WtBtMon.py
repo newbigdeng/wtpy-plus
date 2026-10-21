@@ -18,6 +18,7 @@ from wtpy import WtDtServo
 from .WtLogger import WtLogger
 from .EventReceiver import BtEventReceiver, BtEventSink
 from .BacktestTemplates import STRATEGY_TYPES, normalize_strategy_type, strategy_template, runner_template
+from .RiskLibrary import resolve_selection, validate_fast_selection
 
 def isWindows():
     if "windows" in platform.system().lower():
@@ -640,14 +641,18 @@ class WtBtMon(BtTaskSink):
                 stream.seek(max(0, stream.tell() - 16384))
                 logs = stream.read().decode("utf-8", errors="replace")
         errors = [line for line in logs.splitlines() if any(marker in line for marker in ("Error:", "Exception:", "Traceback"))]
+        from .RiskRuntime import read_risk_events
         return {"id": btid, "strategy_type": info.get("strategy_type", "cta"),
                 "status": info.get("status", "unknown"), "returncode": info.get("returncode"),
                 "state": self.get_bt_state(user, straid, btid) or info.get("state", {}),
                 "summary": self.get_bt_summary(user, straid, btid) or info.get("perform", {}),
-                "logs": logs, "error": errors[-1] if errors else ""}
+                "logs": logs, "error": errors[-1] if errors else "",
+                "risk": {"selection": info.get("risk", {"rules": []}), "events": read_risk_events(os.path.join(folder, "risk-events.jsonl"))},
+                "dataset": info.get("dataset")}
 
     def run_backtest(self, user:str, straid:str, fromTime:int, endTime:int, capital:float, slippage:int=0,
-                     fill_model:str="causal_touch", event_delay:int=0, participation_rate:float=0) -> dict:
+                     fill_model:str="causal_touch", event_delay:int=0, participation_rate:float=0,
+                     risk=None, dataset=None) -> dict:
         from ..wrapper.WtBtWrapper import validate_cta_fill_config
         validate_cta_fill_config(fill_model, event_delay, participation_rate)
         with self._lock:
@@ -658,6 +663,8 @@ class WtBtMon(BtTaskSink):
                 self.user_bts[user] = dict()
             
             strategy_type = normalize_strategy_type(self.user_stras[user][straid].get("strategy_type", "cta"))
+            risk = resolve_selection(risk)
+            validate_fast_selection(risk, strategy_type)
             if strategy_type != "cta" and (fill_model != "causal_touch" or event_delay != 0 or participation_rate != 0):
                 raise ValueError("成交模型参数仅适用于CTA快速回测")
             btid = gen_btid(user, straid)
@@ -669,6 +676,19 @@ class WtBtMon(BtTaskSink):
         
             folder = os.path.join(folder, btid)
             os.mkdir(folder)
+            with open(os.path.join(folder, "risk.json"), "w", encoding="utf-8") as output:
+                json.dump(risk, output, ensure_ascii=False)
+            data_meta = None
+            if dataset:
+                from .HistoryCatalog import prepare_native_dataset
+                data_meta = prepare_native_dataset(os.environ.get("WT_PLUS_WORKSPACE", "/workspace"),
+                                                  dataset, fromTime, endTime, folder)
+                if strategy_type == "hft" and not data_meta["tick_enabled"]:
+                    raise ValueError("HFT回测需要真实Tick；不能将K线合成事件冒充真实Tick")
+                if not data_meta["tick_enabled"] and strategy_type == "cta" and fill_model != "legacy_cta":
+                    raise ValueError("K线没有真实买卖报价，请选择收盘事件的legacy_cta；报价触达和盘口参与率仅适用Tick")
+            with open(os.path.join(folder, "market-data.json"), "w", encoding="utf-8") as output:
+                json.dump({key: data_meta[key] for key in ("code", "period")} if data_meta else {}, output)
 
             # 将策略文件复制到该目录下
             old_path = os.path.join(self.path, user, straid, "MyStrategy.py")
@@ -684,6 +704,11 @@ class WtBtMon(BtTaskSink):
             content = content.replace("$BTID$", btid).replace("$TASKDIR$", folder).replace("$MQURL$", WtBtTask.ipc_url(btid))
             config = json.loads(content)
             config.setdefault("env", {})["mocker"] = strategy_type
+            if data_meta:
+                replay = config.setdefault("replayer", {})
+                replay.update(mode="bin", tick=data_meta["tick_enabled"], bar_simulation="close_only",
+                              store={"path": data_meta["storage"]})
+                replay.setdefault("basefiles", {}).update(data_meta["basefiles"])
             content = json.dumps(config, ensure_ascii=False, indent=2)
 
             f = open(new_path, "w", encoding="UTF-8")
@@ -724,6 +749,8 @@ class WtBtMon(BtTaskSink):
                 "status":"running",
                 "returncode":None,
                 "capital":capital,
+                "risk": risk,
+                "dataset": ({key: value for key, value in data_meta.items() if key not in ("storage", "basefiles")} if data_meta else None),
                 "fill_config":({"fill_model":fill_model,"event_delay":event_delay,"participation_rate":participation_rate} if strategy_type=="cta" else None),
                 "runtime":datetime.datetime.now().strftime("%Y.%m.%d %H:%M:%S"),
                 "state":{

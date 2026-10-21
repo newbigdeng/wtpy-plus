@@ -25,6 +25,9 @@ from .WatchDog import WatchDog, WatcherSink
 from .WtBtMon import WtBtMon
 from .StrategyControl import register_strategy_routes
 from .ManagedStrategies import register_managed_routes, validate_managed_start
+from .StrategyLibrary import register_library_routes
+from .HistoryCatalog import register_history_catalog_routes
+from .RiskLibrary import register_risk_library_routes
 from .RiskControl import register_risk_routes
 from .ChannelProfiles import register_channel_routes, channel_transition_lock
 from .MarketSubscriptions import register_market_subscription_routes
@@ -1054,7 +1057,9 @@ class WtMonSvr(WatcherSink):
                 slippage: int = Body(0, ge=0, title="滑点", embed=True),
                 fill_model: str = Body("causal_touch", embed=True),
                 event_delay: int = Body(0, ge=0, embed=True),
-                participation_rate: float = Body(0, ge=0, le=1, embed=True)
+                participation_rate: float = Body(0, ge=0, le=1, embed=True),
+                risk: dict = Body(None, embed=True),
+                dataset: str = Body(None, embed=True)
         ):
             bSucc, userInfo = check_auth(request, token, self.__sec_key__)
             if not bSucc:
@@ -1091,8 +1096,8 @@ class WtMonSvr(WatcherSink):
             if fromtime > endtime:
                 fromtime, endtime = endtime, fromtime
 
-            fromtime = fromtime * 10000 + 900
-            endtime = endtime * 10000 + 1515
+            fromtime = fromtime * 10000
+            endtime = endtime * 10000 + 2359
 
             if self.__bt_mon__ is None:
                 ret = {
@@ -1107,8 +1112,15 @@ class WtMonSvr(WatcherSink):
                     }
                 else:
                     try:
+                        if dataset:
+                            from .HistoryCatalog import dataset_entries
+                            selected = next((row for row in dataset_entries(os.environ.get("WT_PLUS_WORKSPACE", "/workspace"))
+                                             if row["id"] == dataset), None)
+                            if selected is None or not group_allowed(userInfo, selected["groupid"]):
+                                return {"result": -403, "message": "历史数据集不存在或无访问权限"}
                         btInfo = self.__bt_mon__.run_backtest(user, straid, fromtime, endtime, capital, slippage,
-                                                            fill_model, event_delay, participation_rate)
+                                                            fill_model, event_delay, participation_rate,
+                                                            risk=risk, dataset=dataset)
                     except ValueError as error:
                         return {"result": -2, "message": str(error)}
                     ret = {
@@ -1120,6 +1132,14 @@ class WtMonSvr(WatcherSink):
             return ret
 
     def init_mgr_apis(self, app: FastAPI):
+        register_library_routes(app, self.__data_mgr__,
+                                lambda request, token: check_auth(request, token, self.__sec_key__), self.deploy_dir,
+                                bt_mon_provider=lambda: self.__bt_mon__)
+        register_risk_library_routes(app, self.__data_mgr__,
+                                     lambda request, token: check_auth(request, token, self.__sec_key__))
+        register_history_catalog_routes(app, self.__data_mgr__, self._dog,
+                lambda request, token: check_auth(request, token, self.__sec_key__), data_dir=Path.cwd(),
+                bt_mon=lambda: self.__bt_mon__, plus_manager=lambda: self.__plus_mon__)
         register_managed_routes(app, self.__data_mgr__, self._dog,
                                lambda request, token: check_auth(request, token, self.__sec_key__), self.deploy_dir)
         register_strategy_routes(app, self.__data_mgr__, self._dog,

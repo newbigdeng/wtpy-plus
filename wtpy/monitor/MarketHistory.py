@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import asyncio
 from datetime import date, datetime, time as daytime, timedelta
 import json
+import importlib.util
 import math
 from pathlib import Path
 import subprocess
@@ -117,7 +118,7 @@ def normalize_bars(items, period, allowed):
         result.append(dict(date=trading_date, time=0 if period == "d" else stamp - 199000000000,
                            open=values["open"], high=values["high"], low=values["low"], close=values["close"],
                            settle=values["settle"], vol=values["vol"], hold=values["oi"], diff=0,
-                           money=values["amount"] * (10000 if period == "d" else 1)))
+                           money=values["amount"] * row.get("_money_scale", 10000 if period == "d" else 1)))
     return result
 
 
@@ -213,9 +214,22 @@ class MarketHistory:
         periods = [dict(value=p, label=label, **status.get("periods", {}).get(p, dict(available=False, reason="尚未检查平台权限" if configured else "尚未配置云端凭据"))) for p, label in PERIODS.items()]
         available = any(p["available"] for p in periods)
         replay = _load(ctx["root"] / "run/config.yaml").get("monitor", {}).get("market_mode") == "simnow_replay"
-        return dict(result=0, message="补数使用已授权的历史数据接口", can_backfill=not replay and not self.dog.isRunning(groupid),
-                    providers=[dict(id="tushare", label="Tushare", configured=configured, available=available,
+        ak_installed = importlib.util.find_spec("akshare") is not None
+        private = json.loads(self.provider.config_path.read_text()) if self.provider.config_path.is_file() else {}
+        lake = private.get("cnequity", {}).get("data_root", "")
+        cne_ready = bool(lake and Path(lake).is_dir() and importlib.util.find_spec("cnequity"))
+        cne_reason = "从已配置的 CNEquity 数据湖读取期货逐合约日线及 1 分钟线" if cne_ready else "需安装 CNEquity 并在云端凭据文件配置 cnequity.data_root；不把股票 trade_ticks 当期货 Tick"
+        ak_periods = [dict(value=p, label=label, available=ak_installed,
+            reason="仅返回平台仍保留的具体合约 K 线；不能补 Tick，旧分钟数据可能取不到" if ak_installed else "运行环境未安装 AkShare") for p,label in PERIODS.items()]
+        return dict(result=0, message="外部平台只补真实返回的 K 线，不把 K 线标成 Tick", can_backfill=not replay and not self.dog.isRunning(groupid),
+                    providers=[dict(id="akshare", label="AkShare（默认）", configured=ak_installed, available=ak_installed,
+                                    reason="新浪具体合约日线和分钟线；历史范围由源端决定" if ak_installed else "运行环境未安装 AkShare", periods=ak_periods, max_days=31,
+                                    documentation="https://akshare.akfamily.xyz/data/futures/futures.html"),
+                               dict(id="tushare", label="Tushare", configured=configured, available=available,
                                     reason="接口已就绪" if available else "期货接口尚未授权或尚未检查权限", periods=periods, max_days=31, checked_at=status.get("checked_at")),
+                               dict(id="cnequity", label="CNEquity 数据湖", configured=cne_ready, available=cne_ready,
+                                    periods=[dict(value=p,label=PERIODS[p],available=cne_ready,reason=cne_reason) for p in ("d","m1")], max_days=31,
+                                    reason=cne_reason, documentation="https://rootsunc.github.io/CNEquity/datasets/catalog/"),
                                dict(id="ifind", label="同花顺 iFinD", configured=False, available=False, periods=[], max_days=31, reason="需另行配置已授权的 iFinD 账号与接口"),
                                dict(id="wind", label="Wind", configured=False, available=False, periods=[], max_days=31, reason="需另行配置已授权的 Wind API 与运行环境")],
                     reason="回放测试环境不能混入真实市场历史数据" if replay else "交易引擎须停止；写入前协调数据中台")
@@ -305,8 +319,19 @@ class MarketHistory:
     def fetch(self, ctx, job):
         self._check_stopping()
         code, period = tushare_code(ctx["contract"]), job["period"]
+        ak_rows = None
+        if job["provider"] == "akshare":
+            from .HistoryCatalog import native_worker
+            ak_rows = native_worker(dict(action="akshare", ticker=ctx["contract"]["ticker"], period=period))["rows"]
+        elif job["provider"] == "cnequity":
+            from .HistoryCatalog import native_worker
+            private = json.loads(self.provider.config_path.read_text())
+            ticker, suffix = code.split(".")
+            symbol = ticker+"."+{"CFX":"CFE","ZCE":"CZC"}.get(suffix,suffix)
+            ak_rows = native_worker(dict(action="cnequity", data_root=private["cnequity"]["data_root"],
+                symbol=symbol,period=period,start_date=job["start_date"],end_date=job["end_date"]))["rows"]
         if period == "d":
-            rows = self.provider.request("fut_daily", dict(ts_code=code, start_date=str(job["start_date"]), end_date=str(job["end_date"])),
+            rows = ak_rows if ak_rows is not None else self.provider.request("fut_daily", dict(ts_code=code, start_date=str(job["start_date"]), end_date=str(job["end_date"])),
                                          "ts_code,trade_date,open,high,low,close,settle,vol,amount,oi")
             allowed = {number(d): number(d) for d in ctx["days"]}
         else:
@@ -317,8 +342,8 @@ class MarketHistory:
                     raise ValueError("交易日历未覆盖所选日期，不能可靠判断夜盘所属交易日")
                 allowed.update({stamp: number(day) for stamp in stamps})
             dates = sorted({str(stamp)[:8] for stamp in allowed})
-            rows = []
-            for day in dates:
+            rows = ak_rows if ak_rows is not None else []
+            for day in ([] if ak_rows is not None else dates):
                 self._check_stopping()
                 text = datetime.strptime(day, "%Y%m%d").strftime("%Y-%m-%d")
                 rows += self.provider.request("ft_mins", dict(ts_code=code, freq="1min" if period=="m1" else "5min", start_date=text+" 00:00:00", end_date=text+" 23:59:59"),

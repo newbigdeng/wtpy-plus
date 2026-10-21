@@ -4,6 +4,7 @@ from pathlib import Path
 import MyStrategy
 from wtpy import BaseCtaStrategy, BaseHftStrategy, BaseSelStrategy, WtBtEngine, EngineType
 from wtpy.apps import WtBtAnalyst
+from wtpy.monitor.RiskRuntime import attach_risk, fast_account_provider
 engine = None
 stopped = threading.Event()
 finished = threading.Event()
@@ -25,9 +26,17 @@ def main():
         engine.init('$BASEFILES$', 'configbt.json')
         engine.configBacktest($FROMTIME$, $ENDTIME$)
         engine.commitBTConfig()
+        attach_risk(engine, json.loads(Path('risk.json').read_text(encoding='utf-8')) if Path('risk.json').exists() else None,
+                    output='risk-events.jsonl', account_provider=fast_account_provider($CAPITAL$))
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
-        strategy = candidates[0](name='$STRAID$')
+        market = json.loads(Path('market-data.json').read_text(encoding='utf-8')) if Path('market-data.json').exists() else {}
+        supplied = {'name': '$STRAID$'}
+        if market:
+            supplied.update(code=market['code'], period='m1' if market['period']=='tick' else 'd1' if market['period']=='d' else market['period'])
+        signature = inspect.signature(candidates[0])
+        accepts_kwargs = any(item.kind == inspect.Parameter.VAR_KEYWORD for item in signature.parameters.values())
+        strategy = candidates[0](**{key: value for key, value in supplied.items() if key in signature.parameters or accepts_kwargs})
         sel_state = {'code': getattr(strategy, 'code', ''), 'period': getattr(strategy, 'period', ''),
                      'stime': $FROMTIME$, 'etime': $ENDTIME$, 'progress': 0, 'elapse': 0,
                      'scheduled_count': 0, 'state_source': 'python_sel_runner', 'progress_kind': 'completion'}

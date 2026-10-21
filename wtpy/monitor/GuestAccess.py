@@ -17,6 +17,9 @@ GUEST_READ_PATHS = frozenset("""
 /mgr/qryportperfs /mgr/qryportfilters /mgr/qrystra_runtime /mgr/qryrisk_state
 /mgr/qrychannels /mgr/workbench /mgr/traderisk
 /mgr/strategy_catalog /mgr/strategy_plan
+/mgr/strategy_library /mgr/strategy_library_get
+/mgr/history/catalog /mgr/history/datasets
+/mgr/risk-library/list /mgr/risk-library/get
 /mgr/market/subscriptions /mgr/market/providers /mgr/market/coverage /mgr/market/jobs
 /bt/strategytypes /bt/qrystras /bt/qrycode /bt/qrybtdetail /bt/qrybars
 /bt/qrystrabts /bt/qrybtsigs /bt/qrybttrds /bt/qrybtfunds /bt/qrybtrnds
@@ -35,7 +38,7 @@ GUEST_EMPTY = {
     "/mgr/qryacts": {"actions": []},
 }
 PRIVATE_KEYS = frozenset(("passwd", "password", "pass", "token", "secret", "seckey", "authcode", "appsecret", "brokerid", "userid", "user_id", "accountid", "account_id", "investorid", "loginip", "iplist", "loginid", "createby", "modifyby", "source_code", "strategy_code", "traceback", "log_tail", "exception", "investor", "user", "account", "auth", "error", "errors", "last_error", "stderr", "stdout", "output", "logs", "log", "config", "configuration", "broker", "address", "front", "tdfront", "mdfront", "source"))
-PATH_KEYS = frozenset(("path", "folder", "root", "file", "filename", "argv", "command", "cmd", "param", "params", "environment", "env", "source_path", "worker_path", "config_path", "storage", "files", "storage_root", "data_root", "manifest", "manifest_path"))
+PATH_KEYS = frozenset(("path", "folder", "root", "file", "filename", "argv", "command", "cmd", "param", "params", "environment", "env", "source_path", "worker_path", "config_path", "storage", "files", "storage_root", "data_root", "manifest", "manifest_path", "market_snapshot"))
 
 def guest_session_valid(scope):
     info = scope.get("session", {}).get("tokeninfo") or {}

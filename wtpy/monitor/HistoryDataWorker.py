@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from wtpy.WtCoreDefs import WTSBarStruct
+from wtpy.WtCoreDefs import WTSBarStruct, WTSTickStruct
 from wtpy.wrapper.WtDtHelper import WtDataHelper
 
 
@@ -121,6 +121,53 @@ def merge(payload, helper):
 
 
 def run(payload):
+    if payload["action"] == "cnequity":
+        from cnequity.query import load
+        from datetime import datetime
+        period = payload["period"]
+        if period not in ("d", "m1"):
+            raise ValueError("CNEquity 仅接入逐合约日线与 1 分钟线，不提供期货 Tick")
+        frame = load("futures_bars" if period == "d" else "futures_minute_bars",
+            start=datetime.strptime(str(payload["start_date"]), "%Y%m%d").date(),
+            end=datetime.strptime(str(payload["end_date"]), "%Y%m%d").date(),
+            symbols=[payload["symbol"]], data_root=payload["data_root"])
+        rows = []
+        for item in frame.to_dicts():
+            if any(item.get(key) is None for key in ("open", "high", "low", "close")):
+                continue  # A no-trade exchange row is not a tradable OHLC bar.
+            row = {key:item.get(key, 0) for key in ("open", "high", "low", "close", "settle", "amount")}
+            row.update(vol=item.get("volume", 0), oi=item.get("open_interest", 0), _money_scale=1)
+            if period == "d":
+                row["trade_date"] = str(item["trade_date"]).replace("-", "")[:8]
+            else:
+                row["trade_time"] = str(item["bar_time"])
+            rows.append(row)
+        return {"rows": rows}
+    if payload["action"] == "inspect_many":
+        helper = WtDataHelper()
+        results = {}
+        for item in payload["entries"]:
+            try:
+                results[item["id"]] = inspect_or_export(dict(item, action="inspect"), helper)
+            except (ValueError, OSError) as error:
+                results[item["id"]] = dict(rows=0, start=None, end=None, dates=[], error=str(error))
+        return {"entries": results}
+    if payload["action"] == "akshare":
+        import akshare as ak
+        symbol, period = payload["ticker"].upper(), payload["period"]
+        frame = ak.futures_zh_daily_sina(symbol=symbol) if period == "d" else ak.futures_zh_minute_sina(symbol=symbol, period="1" if period == "m1" else "5")
+        rows = []
+        for item in frame.to_dict("records"):
+            row = {key: item.get(key, 0) for key in ("open", "high", "low", "close")}
+            row.update(vol=item.get("volume", 0), oi=item.get("hold", 0))
+            if period == "d":
+                row["trade_date"] = str(item["date"]).replace("-", "")[:8]
+            else:
+                row["trade_time"] = str(item["datetime"])
+            rows.append(row)
+        return {"rows": rows}
+    if payload["action"] in ("inspect", "export"):
+        return inspect_or_export(payload, WtDataHelper())
     if int(payload["start_date"]) > int(payload["end_date"]):
         raise ValueError("开始交易日不能晚于结束交易日")
     actions = {"coverage": coverage, "merge": merge}
@@ -128,6 +175,74 @@ def run(payload):
     if action is None:
         raise ValueError("未知的行情补数操作")
     return action(payload, WtDataHelper())
+
+
+def dataset_records(payload, helper):
+    """Snapshot server-selected files. Prefer settled history over overlapping RT days."""
+    ticks = payload["period"] == "tick"
+    historical_days = set()
+    historical = []
+    realtime = []
+    for filename in payload["files"]:
+        path = Path(filename)
+        reader = (helper.read_dsb_ticks if path.suffix == ".dsb" else helper.read_dmb_ticks) if ticks else (helper.read_dsb_bars if path.suffix == ".dsb" else helper.read_dmb_bars)
+        data = reader(str(path))
+        if data is None:
+            raise ValueError("行情文件无法读取：" + path.name)
+        struct = WTSTickStruct if ticks else WTSBarStruct
+        rows = [struct.from_buffer_copy(row.tobytes()) for row in data.ndarray]
+        if path.suffix == ".dsb":
+            historical.extend(rows)
+            if ticks:
+                historical_days.update(int(row.trading_date) for row in rows)
+        else:
+            if not ticks and rows:
+                # The live writer may still be updating its final bar. Only
+                # historical DSB or earlier realtime bars are closed input.
+                rows = rows[:-1]
+            realtime.extend(rows)
+    if ticks:
+        rows = historical + [row for row in realtime if int(row.trading_date) not in historical_days]
+        rows.sort(key=lambda row: (int(row.action_date), int(row.action_time)))
+    else:
+        rows = {stamp(row, payload["period"]): row for row in realtime}
+        rows.update({stamp(row, payload["period"]): row for row in historical})
+        rows = [rows[key] for key in sorted(rows)]
+    start, end = payload.get("start", 0), payload.get("end", 999999999999)
+    def event_stamp(row):
+        if ticks:
+            return int(row.action_date) * 10000 + int(row.action_time) // 100000
+        return int(row.date) * 10000 + 1500 if payload["period"] == "d" else stamp(row, payload["period"])
+    return [row for row in rows if start <= event_stamp(row) <= end], event_stamp
+
+
+def inspect_or_export(payload, helper):
+    rows, event_stamp = dataset_records(payload, helper)
+    result = {"rows": len(rows), "start": min((event_stamp(row) for row in rows), default=None),
+              "end": max((event_stamp(row) for row in rows), default=None),
+              "dates": sorted({int(row.trading_date if payload["period"] == "tick" else row.date) for row in rows})}
+    if payload["action"] != "export":
+        return result
+    if not rows:
+        raise ValueError("所选时间段没有行情，不创建空回测")
+    root = Path(payload["destination"])
+    exchange, ticker, period = payload["exchange"], payload["ticker"], payload["period"]
+    files = []
+    if period == "tick":
+        for day in result["dates"]:
+            values = [row for row in rows if int(row.trading_date) == day]
+            path = root / "his/ticks" / exchange / str(day) / (ticker + ".dsb")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not helper.store_ticks(str(path), (WTSTickStruct * len(values))(*values), len(values)):
+                raise ValueError("Tick 快照写入失败")
+            files.append(str(path))
+    else:
+        path = root / "his" / {"d":"day", "m1":"min1", "m5":"min5"}[period] / exchange / (ticker + ".dsb")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not helper.store_bars(str(path), (WTSBarStruct * len(rows))(*rows), len(rows), period):
+            raise ValueError("K 线快照写入失败")
+        files.append(str(path))
+    return dict(result, files=files, storage=str(root))
 
 
 if __name__ == "__main__":

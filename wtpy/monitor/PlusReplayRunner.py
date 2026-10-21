@@ -40,11 +40,14 @@ def load_ticks(item):
             ticks.append(tick)
         return ticks
     from wtpy.wrapper.WtDtHelper import WtDataHelper
-    data=WtDataHelper().read_dsb_ticks(item["file"])
-    if data is None: raise ValueError("无法读取原生Tick数据")
-    records=data.ndarray
-    # The installed helper exposes exactly the native Tick struct dtype.
-    return [WTSTickStruct.from_buffer_copy(row.tobytes()) for row in records]
+    helper=WtDataHelper()
+    ticks=[]
+    for filename in item.get("files", [item.get("file")]):
+        data=helper.read_dsb_ticks(filename)
+        if data is None: raise ValueError("无法读取原生Tick数据")
+        ticks.extend(WTSTickStruct.from_buffer_copy(row.tobytes()) for row in data.ndarray)
+    ticks.sort(key=lambda tick:(int(tick.action_date),int(tick.action_time)))
+    return ticks
 class CheckedStrategy:
     def __init__(self, strategy):
         self.strategy=strategy;self.errors=[];self.counts={}
@@ -64,6 +67,8 @@ def build_config(task,item,first,folder):
     basefiles={key:str(base/file) for key,file in (
         ("commodity","commodities.json"),("contract","contracts.json"),
         ("session","sessions.json"),("holiday","holidays.json"),("hot","hots.json"))}
+    if item.get("basefiles_map"):
+        basefiles={key:value for key,value in item["basefiles_map"].items() if key != "fee"}
     basefiles["utf-8"] = True
     finance = task["finance"]
     fee = finance["fees"]
@@ -115,7 +120,13 @@ def run(folder,workspace):
     from wtpy.ExtModuleDefs import BaseExtParser
     from wtpy.WtCoreDefs import WTSTickStruct
     folder=Path(folder).resolve();os.chdir(folder)
-    task=read_json(folder/"task.json");item=next(x for x in dataset_catalog(workspace) if x["id"]==task["dataset"])
+    task=read_json(folder/"task.json")
+    if task.get("market_snapshot"):
+        snapshot=task["market_snapshot"]
+        item=dict(kind="native_ticks",source="recorded",files=snapshot["files"],
+                  basefiles=str(Path(snapshot["basefiles"]["contract"]).parent),basefiles_map=snapshot["basefiles"])
+    else:
+        item=next(x for x in dataset_catalog(workspace) if x["id"]==task["dataset"])
     stream=[x for x in load_ticks(item) if task["start"] <= int(x.action_date)*10000+int(x.action_time)//100000 <=task["end"]]
     if not stream:raise ValueError("起止范围内没有Tick；不创建空结果")
     previous=None
@@ -146,6 +157,8 @@ def run(folder,workspace):
     try:
         engine.init("",str(folder/"config.json"))
         engine.commitConfig()
+        from .RiskRuntime import attach_risk, replay_account_provider
+        attach_risk(engine,task.get("risk"),output=folder/"risk-events.jsonl",account_provider=replay_account_provider(folder/"replay_account.json"))
         product = engine.getProductInfo(".".join(task["code"].split(".")[:2]))
         task["volume_scale"] = product.volscale
         engine.add_exetended_parser(BaseExtParser("plus-history"))
@@ -207,6 +220,7 @@ def run(folder,workspace):
         task.update(orders=len(report["orders"]),trades=len(report["trades"]),updated_at=time.time())
         write_json(folder/"task.json",task)
 def make_report(folder,task,stream,callbacks):
+    from .RiskRuntime import read_risk_events
     events=[]
     path=folder/"replay_events.jsonl"
     if path.exists():
@@ -256,7 +270,8 @@ def make_report(folder,task,stream,callbacks):
                        "slippage_cost":sum(float(x.get("slippage",0))*float(x["volume"])*float(task["volume_scale"]) for x in trades),
                        "rejected_insufficient_funds":sum(x.get("error_code")=="INSUFFICIENT_FUNDS" for x in rejections),
                        "recorded_market_data":task.get("market_source")=="recorded"},
-            "limitations":LIMITATIONS}
+            "risk":{"selection":task.get("risk"),"events":read_risk_events(folder/"risk-events.jsonl")},
+            "data_model":task.get("data_model", "recorded_tick"),"limitations":LIMITATIONS}
 def main():
     folder=Path(sys.argv[1]).resolve();workspace=Path(sys.argv[2]).resolve()
     try:run(folder,workspace)

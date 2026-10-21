@@ -1,11 +1,9 @@
 """Stopped-only Python strategy plans and explicit managed-entry publication."""
-import ast
 from contextlib import contextmanager
 from copy import deepcopy
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import sys
 import uuid
@@ -17,69 +15,10 @@ from .ChannelProfiles import channel_transition_lock
 from .ManagedStrategyRunner import native_config
 from .PlusExecution import EXECUTORS, effective_execution
 from .Roles import can_admin, group_allowed
+from .StrategySource import analyze, identifier
+from .StrategyLibrary import StrategyLibrary
 
 ENTRY = "from wtpy.monitor.ManagedStrategyRunner import main\n\nif __name__ == '__main__':\n    main(__file__)\n"
-KINDS = {"BaseCtaStrategy": "CTA", "BaseHftStrategy": "HFT", "BaseSelStrategy": "SEL"}
-
-
-def identifier(value):
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,39}", value):
-        raise ValueError("ID须以英文字母开头，只能包含字母、数字、下划线或短横线，最多40字符")
-    return value
-
-
-def analyze(source):
-    if not isinstance(source, str) or len(source.encode("utf-8")) > 262144:
-        raise ValueError("Python源码不可超过256KB")
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as exc:
-        raise ValueError("Python语法错误，第%d行：%s" % (exc.lineno, exc.msg)) from None
-    aliases = dict(KINDS)
-    for node in tree.body:
-        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("wtpy"):
-            for item in node.names:
-                if item.name in KINDS:
-                    aliases[item.asname or item.name] = KINDS[item.name]
-    classes = []
-    for node in tree.body:
-        if not isinstance(node, ast.ClassDef):
-            continue
-        kinds = [aliases.get(base.id) if isinstance(base, ast.Name) else
-                 KINDS.get(base.attr) if isinstance(base, ast.Attribute) else None for base in node.bases]
-        kind = next((item for item in kinds if item), None)
-        if kind is None:
-            continue
-        constructor = next((item for item in node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "__init__"), None)
-        parameters = []
-        kwargs = False
-        if constructor:
-            args = constructor.args
-            if args.posonlyargs:
-                raise ValueError("策略构造参数须可按名称传入，不支持仅位置参数")
-            kwargs = args.kwarg is not None
-            positional = args.args[1:]
-            defaults = [None] * (len(positional) - len(args.defaults)) + list(args.defaults)
-            for arg, default in list(zip(positional, defaults)) + list(zip(args.kwonlyargs, args.kw_defaults)):
-                row = {"name": arg.arg, "required": default is None, "type": ast.unparse(arg.annotation) if arg.annotation else ""}
-                if default is not None:
-                    try:
-                        row["default"] = ast.literal_eval(default)
-                        json.dumps(row["default"], allow_nan=False)
-                    except (ValueError, TypeError):
-                        row["default_expression"] = ast.unparse(default)
-                parameters.append(row)
-        else:
-            parameters = [{"name": "name", "required": True, "type": "str"}]
-        if not kwargs and "name" not in {item["name"] for item in parameters}:
-            raise ValueError("策略构造函数须接受name参数，以绑定唯一实例ID")
-        classes.append({"name": node.name, "engine_type": kind, "parameters": parameters,
-                        "accepts_kwargs": kwargs, "supported": kind in ("CTA", "HFT")})
-    if len(classes) != 1:
-        raise ValueError("每个文件须直接定义一个WT策略子类，支持CTA、HFT或SEL")
-    return classes
-
-
 def _read(path, default=None):
     if not path.exists():
         return deepcopy(default)
@@ -142,7 +81,7 @@ def validate_managed_start(data_mgr, dog, groupid):
         raise ValueError("已应用的计划中没有启用的策略")
 
 
-def _normalize(plan, channels):
+def _normalize(plan, channels, library=None, previous=None):
     if not isinstance(plan, dict) or plan.get("engine_type") not in ("CTA", "HFT"):
         raise ValueError("页面托管交易组合目前支持CTA和HFT；SEL原生回测保持可用")
     rows = plan.get("strategies", [])
@@ -152,12 +91,33 @@ def _normalize(plan, channels):
               "engine_type": plan["engine_type"], "trading_enabled": plan.get("trading_enabled") is True,
               "strategies": []}
     seen = set()
+    previous_rows = {row["id"]: row for row in (previous or {}).get("strategies", [])}
     for item in rows:
         sid = identifier(item.get("id"))
         if sid in seen:
             raise ValueError("策略实例ID不能重复")
         seen.add(sid)
-        source = item.get("source", "")
+        library_id, version = item.get("library_id"), item.get("library_version")
+        old = previous_rows.get(sid, {})
+        if library_id:
+            if library is None:
+                raise ValueError("策略库未配置")
+            if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+                raise ValueError("请固定策略库版本，再保存组合计划")
+            # Clients select a version; source always comes from that immutable version.
+            entry = library.get(library_id, version)
+            source = entry["source"]
+            version = entry["version"]
+        elif old and old.get("source") and not old.get("library_id"):
+            # Preserve plans created before the library existed, without accepting
+            # replacement code through the portfolio endpoint.
+            source = old["source"]
+            if item.get("source", source) != source:
+                raise ValueError("旧计划源码只能先加入策略库，再选择库版本替换")
+        else:
+            raise ValueError("请先在策略管理页导入Python文件，再从策略库选择策略")
+        if item.get("source", source) != source:
+            raise ValueError("组合不能上传或替换源码，请在策略库保存版本后选择")
         cls = analyze(source)[0]
         if cls["engine_type"] != plan["engine_type"] or item.get("class_name", cls["name"]) != cls["name"]:
             raise ValueError("策略类与组合引擎类型不一致")
@@ -192,9 +152,12 @@ def _normalize(plan, channels):
             raise ValueError("HFT直接委托，不使用CTA执行器")
         row = {"id": sid, "name": str(item.get("name") or sid)[:80],
             "class_name": cls["name"], "engine_type": cls["engine_type"], "source": source,
+            "library_id": library_id or "", "library_version": version,
             "params": params, "trader": trader, "execution": execution,
             "enabled": item.get("enabled", True) is True, "slippage": slippage, "agent": item.get("agent", True) is True}
         result["strategies"].append(row)
+    from .RiskLibrary import resolve_selection
+    result["risk"] = resolve_selection(plan.get("risk"))
     return result
 
 
@@ -260,6 +223,7 @@ def _protect_positions(data_mgr, groupid, previous, plan, applying):
 
 
 def register_managed_routes(app, data_mgr, dog, check_auth, deploy_dir):
+    library = StrategyLibrary.for_deployment(deploy_dir)
     def authorize(request, token, groupid=None, write=False):
         ok, info = check_auth(request, token)
         if not ok:
@@ -283,7 +247,12 @@ def register_managed_routes(app, data_mgr, dog, check_auth, deploy_dir):
             for row in draft["strategies"]:
                 row.pop("source", None)
                 row.pop("params", None)
-        return {"result": 0, "plan": draft, "managed": managed, "mode": "managed" if managed else "legacy",
+        from .StrategyControl import runtime_rows
+        runtime = runtime_rows(data_mgr, dog, groupid)["strategies"]
+        planned = {row["id"] for row in draft["strategies"]}
+        return {"result": 0, "plan": draft, "existing_strategies": [row for row in runtime if row["id"] not in planned],
+            "strategy_status": {row["id"]: row for row in runtime},
+            "managed": managed, "mode": "managed" if managed else "legacy",
             "entry_managed": "run_managed.py" in conf.get("param", ""), "has_applied": bool(applied.get("revision")),
             "running": bool(dog.isRunning(groupid)), "can_manage": can_admin(info),
             "applied_revision": applied.get("revision", ""),
@@ -341,7 +310,7 @@ def register_managed_routes(app, data_mgr, dog, check_auth, deploy_dir):
                         raise ValueError("计划已被其他页面更新，请重新读取")
                     base = _base(group)
                     channels = {row["id"] for row in base.get("traders", []) if row.get("active", True)}
-                    normalized = _normalize(plan, channels)
+                    normalized = _normalize(plan, channels, library, previous)
                     if normalized["engine_type"] != str(group["gtype"]).upper():
                         raise ValueError("已有组合不能更换引擎类型，请创建独立组合")
                     applied = _read(folder / "applied.json", {})

@@ -11,6 +11,9 @@ const Backtest=()=>import('@/components/backtest/main.vue')
 const Schedule=()=>import('@/components/schedule/main.vue')
 const Admins=()=>import('@/components/admins/main.vue')
 const ApiManual=()=>import('@/components/backtest/ApiManual.vue')
+const StrategyLibrary=()=>import('@/components/strategies/StrategyLibrary.vue')
+const HistoryManager=()=>import('@/components/history/HistoryManager.vue')
+const RiskLibrary=()=>import('@/components/risk-library/main.vue')
 
 
 const router=createRouter({
@@ -35,6 +38,9 @@ const router=createRouter({
                 {path: '/monitor', name:"monitor", component: Monitor},
                 {path:'/deploy',redirect:'/monitor'},
                 {path: '/backtest', name:"backtest", component: Backtest},
+                {path: '/strategies', name:"strategies", component: StrategyLibrary},
+                {path: '/history', name:"history", component: HistoryManager},
+                {path: '/risk-library', name:"risk-library", component: RiskLibrary},
                 {path: '/schedule', name:"schedule", component: Schedule},
                 {path: '/admins', name:"admins", component: Admins}
             ]

@@ -7,8 +7,8 @@
   <el-form label-position="top" class="plus-config" :disabled="launching" @submit.prevent="launch">
    <el-form-item label="历史数据集"><el-select v-model="config.dataset" aria-label="Plus历史数据集" :disabled="launching" @change="selectDataset"><el-option v-for="item in capabilities.datasets||[]" :key="item.id" :value="item.id" :label="item.label"/></el-select></el-form-item>
    <el-form-item label="合约"><el-input :model-value="selectedDataset?.code||'—'" readonly aria-label="Plus合约"/></el-form-item>
-   <el-form-item label="开始时间"><el-input v-model="config.start" aria-label="Plus开始时间" placeholder="沿用数据集起点"/></el-form-item>
-   <el-form-item label="结束时间"><el-input v-model="config.end" aria-label="Plus结束时间" placeholder="沿用数据集终点"/></el-form-item>
+   <el-form-item label="开始时间"><el-date-picker v-model="config.start" type="datetime" value-format="YYYYMMDDHHmm" format="YYYY-MM-DD HH:mm" aria-label="Plus开始时间" placeholder="选择开始时间"/></el-form-item>
+   <el-form-item label="结束时间"><el-date-picker v-model="config.end" type="datetime" value-format="YYYYMMDDHHmm" format="YYYY-MM-DD HH:mm" aria-label="Plus结束时间" placeholder="选择结束时间"/></el-form-item>
    <el-form-item label="初始资金"><el-input-number v-model="capitalInput" :min="1" :max="1000000000" :step="10000" aria-label="Plus初始资金"/></el-form-item>
    <el-form-item label="主K线周期"><el-select v-model="config.period" aria-label="Plus周期"><el-option label="1分钟" value="m1"/><el-option label="5分钟" value="m5"/></el-select></el-form-item>
    <el-form-item v-if="engineType.toLowerCase()==='cta'" label="CTA 执行器"><el-select v-model="execution.id" aria-label="Plus执行策略" @change="resetExecution"><el-option v-for="item in capabilities.executors||[]" :key="item.id" :value="item.id" :label="item.label"/></el-select><small>与实盘复用 MinImpact、TWAP、VWAP 执行器。</small></el-form-item>
@@ -24,10 +24,11 @@
     <el-form-item label="计费方式"><el-select v-model="finance.fees.byvolume" aria-label="Plus计费方式"><el-option :value="true" label="按手数（元/手）"/><el-option :value="false" label="按成交金额比例"/></el-select></el-form-item>
     <el-form-item v-for="item in feeFields" :key="item.key" :label="item.label+(item.key==='minfee'?'（元）':finance.fees.byvolume?'（元/手）':'（比例，例如 0.0001）')"><el-input-number v-model="finance.fees[item.key]" :min="0" :precision="8" :controls="false" :aria-label="'Plus'+item.label"/></el-form-item>
    </div>
+   <div class="plus-custom-fees"><RiskSelection v-model="risk" :engine-type="engineType.toUpperCase()"/></div>
    <el-form-item class="plus-launch"><el-button type="success" :loading="launching" :disabled="Boolean(unsupported)||!selectedDataset" @click="launch">保存并运行 Plus</el-button></el-form-item>
   </el-form>
   <p class="plus-finance-note" v-if="selectedDataset">{{financeDescription}}</p>
-  <p class="plus-dataset-note" v-if="selectedDataset">{{selectedDataset.source}} · {{selectedDataset.ticks||0}} 条Tick · 时间格式与数据集一致：{{selectedDataset.start}} — {{selectedDataset.end}}</p>
+  <p class="plus-dataset-note" v-if="selectedDataset">{{selectedDataset.source}} · {{selectedDataset.ticks||0}} 条真实或明确标注的演示 Tick · 实际覆盖 {{selectedDataset.start}} — {{selectedDataset.end}}。只回放所选区间；没有数据会拒绝启动。Plus 不用 K 线伪造盘口。</p>
   <p class="plus-finance-note">滑点受委托限价与涨跌停限制，实际成本可能小于配置值。保证金按多、空持仓分别累计，不计算锁仓优惠。</p>
   <details class="plus-limits"><summary>模拟范围与结果口径</summary><ul><li v-for="text in capabilities.limitations||[]" :key="text">{{text}}</li><li>有限档位历史行情无法重建真实排队和市场冲击；结果用于链路验证，收益需结合模拟假设解释。</li></ul></details>
   <div class="plus-task-heading"><h3>Plus 任务</h3><span>{{tasks.length}} 次</span></div>
@@ -62,12 +63,13 @@
 <script>
 import * as echarts from 'echarts'
 import PlusFinanceReport from './PlusFinanceReport.vue'
+import RiskSelection from '@/components/common/RiskSelection.vue'
 const running=task=>['queued','running'].includes(task.status)
 export default {
- name:'PlusResearch',components:{PlusFinanceReport},
+ name:'PlusResearch',components:{PlusFinanceReport,RiskSelection},
  props:{strategyid:{type:String,required:true},engineType:{type:String,default:'cta'},beforeSave:{type:Function,required:true},capital:{type:Number,default:1000000},active:{type:Boolean,default:true},guest:{type:Boolean,default:false}},
  emits:['update:capital'],
- data:()=>({capabilities:{datasets:[],engines:[],executors:[],limitations:[]},execution:{id:'minimpact',params:{pricemode:1,offset:0,expire:5,span:0,byrate:false,lots:1},weights:''},config:{dataset:'',start:'',end:'',period:'m1'},finance:{feeMode:'dataset',fees:{byvolume:true,open:null,close:null,closetoday:null,minfee:0},marginPercent:null,slippageTicks:0},feeFields:[{key:'open',label:'开仓费率'},{key:'close',label:'平仓费率'},{key:'closetoday',label:'平今费率'},{key:'minfee',label:'每次成交最低费'}],tasks:[],loading:false,launching:false,detail:null,ledgerTab:'trades',generation:0,ledgers:[{id:'trades',label:'成交'},{id:'orders',label:'委托'},{id:'positions',label:'持仓'},{id:'funds',label:'资金'},{id:'rejections',label:'拒单'},{id:'events',label:'事件'},{id:'route',label:'链路证据'},{id:'log',label:'运行日志'}]}),
+ data:()=>({risk:{rules:[]},capabilities:{datasets:[],engines:[],executors:[],limitations:[]},execution:{id:'minimpact',params:{pricemode:1,offset:0,expire:5,span:0,byrate:false,lots:1},weights:''},config:{dataset:'',start:'',end:'',period:'m1'},finance:{feeMode:'dataset',fees:{byvolume:true,open:null,close:null,closetoday:null,minfee:0},marginPercent:null,slippageTicks:0},feeFields:[{key:'open',label:'开仓费率'},{key:'close',label:'平仓费率'},{key:'closetoday',label:'平今费率'},{key:'minfee',label:'每次成交最低费'}],tasks:[],loading:false,launching:false,detail:null,ledgerTab:'trades',generation:0,ledgers:[{id:'trades',label:'成交'},{id:'orders',label:'委托'},{id:'positions',label:'持仓'},{id:'funds',label:'资金'},{id:'rejections',label:'拒单'},{id:'risk',label:'风控'},{id:'events',label:'事件'},{id:'route',label:'链路证据'},{id:'log',label:'运行日志'}]}),
  computed:{
   capitalInput:{get(){return this.capital},set(value){this.$emit('update:capital',value)}},
   executionFields(){return this.execution.id==='minimpact'?[{key:'pricemode',label:'价格模式（-1本方／0最新／1对手／2自动）',min:-1,max:2},{key:'offset',label:'委托偏移跳数',min:-1000,max:1000},{key:'expire',label:'挂单超时秒',max:86400},{key:'span',label:'最短发单间隔毫秒',max:86400000},{key:'lots',label:'单次委托手数',min:1}]:[{key:'begin_time',label:'窗口开始（HHMM）',max:2359},{key:'end_time',label:'窗口结束（HHMM）',max:2359},{key:'ord_sticky',label:'挂单超时秒',max:86400},{key:'tail_secs',label:'窗口收尾秒数',max:86400},{key:'total_times',label:'拆单次数',min:1,max:10000},{key:'price_mode',label:'价格模式（0最新／1本方／2对手）',max:2},{key:'price_offset',label:'委托偏移跳数',max:1000},{key:'minopenlots',label:'最小拆单手数',min:1}]},
@@ -87,7 +89,7 @@ export default {
   time(value){if(!value)return'—';if(typeof value==='number')return new Date(value<1e12?value*1000:value).toLocaleString();return String(value).replace('T',' ').slice(0,19)},
   cell(value){return value===null||value===undefined?'—':typeof value==='object'?JSON.stringify(value):String(value)},
   fieldName(key){return{time:'时间',timestamp:'时间戳',date:'日期',code:'合约',price:'价格',volume:'数量',qty:'数量',direction:'方向',offset:'开平',order_id:'订单编号',trade_id:'成交编号',localid:'本地编号',status:'状态',equity:'权益',balance:'余额',fee:'手续费',fees:'手续费',profit:'盈亏',position:'持仓',action:'事件',message:'说明',type:'类型',side:'方向',commission:'手续费',margin:'已用保证金',frozen_margin:'冻结保证金',frozen_commission:'冻结手续费',available:'可用资金',slippage_cost:'滑点成本',error_code:'WT 分类码',broker_error_code:'柜台错误码',category:'拒单类型',reason:'原因'}[key]||key},
-  rows(key){return Array.isArray(this.detail?.[key])?this.detail[key]:[]},
+  rows(key){if(key==='risk')return this.detail?.risk?.events||[];return Array.isArray(this.detail?.[key])?this.detail[key]:[]},
   selectDataset(){const item=this.selectedDataset;this.config.start=item?.start?String(item.start):'';this.config.end=item?.end?String(item.end):'';const fees=item?.finance?.fees;this.finance={feeMode:'dataset',fees:{byvolume:fees?.byvolume??true,open:fees?.open??null,close:fees?.close??null,closetoday:fees?.closetoday??null,minfee:fees?.minfee??0},marginPercent:null,slippageTicks:0};this.resetExecution()},
   resetExecution(){const begin=Number(String(this.config.start||this.selectedDataset?.start||'0900').slice(-4)),rawEnd=Number(String(this.config.end||this.selectedDataset?.end||'0905').slice(-4)),minute=Math.floor(begin/100)*60+begin%100+1;const end=rawEnd>begin?rawEnd:Math.floor(minute/60)*100+minute%60;this.execution.params=this.execution.id==='minimpact'?{pricemode:1,offset:0,expire:5,span:0,byrate:false,lots:1}:{begin_time:begin,end_time:end,ord_sticky:5,tail_secs:5,total_times:5,price_mode:2,price_offset:0,lots:1,minopenlots:1}},
   executionPayload(){if(this.engineType.toLowerCase()!=='cta')return null;const value={id:this.execution.id,params:{...this.execution.params}};if(value.id==='vwap'){value.volume_weights=this.execution.weights.split(/[,，\s]+/).filter(Boolean).map(Number);if(value.volume_weights.length<2||value.volume_weights.some(x=>!Number.isFinite(x)||x<0)||!value.volume_weights.some(x=>x>0))throw new Error('VWAP需至少两个非负权重，且总和大于0')}return value},
@@ -104,7 +106,7 @@ export default {
     const finance=this.financePayload(),execution=this.executionPayload()
     if(!await this.beforeSave())return
     if(generation!==this.generation)return
-    const value=await this.request('run',{straid,dataset:this.config.dataset,code:this.selectedDataset.code,start:this.config.start||null,end:this.config.end||null,capital:this.capital,period:this.config.period,finance,execution})
+    const value=await this.request('run',{straid,dataset:this.config.dataset,code:this.selectedDataset.code,start:this.config.start||null,end:this.config.end||null,capital:this.capital,period:this.config.period,finance,execution,risk:this.risk})
     if(generation!==this.generation)return
     this.$message.success('Plus 仿真任务已启动');await this.refresh();if(value.task)await this.open(value.task)
    }catch(error){this.$message.error(error.message)}finally{this.launching=false}

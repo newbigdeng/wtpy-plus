@@ -33,7 +33,10 @@ class GuestAccessTests(unittest.TestCase):
         self.addCleanup(manager.get_db().close)
         manager.add_user({"loginid": "owner-test", "name": "Owner", "role": "admin",
                           "passwd": self.digest, "iplist": "", "products": "", "remark": ""}, "setup")
-        env = patch.dict(os.environ, {"WT_GUEST_ENABLED": "1", "WT_MONITOR_OWNER": "owner-test"})
+        env = patch.dict(os.environ, {"WT_GUEST_ENABLED": "1", "WT_MONITOR_OWNER": "owner-test",
+            "WT_STRATEGY_LIBRARY_ROOT": str(root/"strategy-library"),
+            "WT_RISK_LIBRARY": str(root/"risk-library"),
+            "WT_CHANNEL_PROFILES": str(root/"channel-profiles.json")})
         env.start(); self.addCleanup(env.stop)
         self.server = WtMonSvr(static_folder=str(root / "static"))
         self.addCleanup(self.server.__data_mgr__.get_db().close)
@@ -73,6 +76,45 @@ class GuestAccessTests(unittest.TestCase):
         self.assertEqual(session["userinfo"]["role"], "guest")
         self.assertEqual(self.client.post("/mgr/qrygrp", json={}).json()["result"], 0)
         self.assertEqual(self.client.get("/openapi.json").status_code, 404)
+
+    def test_new_library_routes_are_read_only_and_hide_uploaded_source(self):
+        self.owner()
+        source = 'from wtpy import BaseCtaStrategy\nclass TestLibrary(BaseCtaStrategy):\n    def __init__(self, name, code="private_code"): super().__init__(name)\n'
+        saved = self.client.post("/mgr/strategy_library_save", json={"library_id": "visible_strategy",
+            "name": "Visible strategy", "description": "", "source": source}).json()
+        self.assertEqual(saved["result"], 0, saved)
+        self.guest()
+        for path in ("/mgr/strategy_library", "/mgr/history/catalog", "/mgr/history/datasets", "/mgr/risk-library/list"):
+            response = self.client.post(path, json={})
+            self.assertEqual(response.status_code, 200, path)
+            self.assertEqual(response.json()["result"], 0, response.text)
+        view = self.client.post("/mgr/strategy_library_get", json={"library_id": "visible_strategy", "version": 1})
+        self.assertNotIn("private_code", view.text)
+        self.assertNotIn("source", view.json()["strategy"])
+        self.assertNotIn("parameters", view.json()["strategy"])
+        from wtpy.monitor.GuestAccess import guest_data
+        self.assertEqual(guest_data({"market_snapshot": {"files": ["/private/input.dsb"]}, "code": "SHFE.rb.2701"}),
+                         {"code": "SHFE.rb.2701"})
+
+    def test_backtest_dataset_cannot_bypass_group_scope(self):
+        user = {"loginid": "owner-test", "role": "admin", "products": ["allowed"]}
+        hidden = {"id": "local_hidden", "groupid": "other", "code": "SHFE.rb.2701"}
+        native = self.server.__bt_mon__
+        plus = self.server.__plus_mon__
+        with patch("wtpy.monitor.WtMonSvr.check_auth", return_value=(True, user)), \
+             patch("wtpy.monitor.HistoryCatalog.dataset_entries", return_value=[hidden]), \
+             patch.object(plus, "capabilities", return_value={"engines": ["CTA"], "datasets": [hidden]}), \
+             patch.object(native, "run_backtest") as run_native, patch.object(plus, "create") as run_plus:
+            self.owner()
+            self.assertEqual(self.client.post("/bt/plus/capabilities", json={}).json()["datasets"], [])
+            native_result = self.client.post("/bt/runstrabt", json={"straid": self.strategy_id,
+                "dataset": hidden["id"], "stime": 20261019, "etime": 20261020}).json()
+            plus_result = self.client.post("/bt/plus/run", json={"straid": self.strategy_id,
+                "dataset": hidden["id"], "code": hidden["code"]}).json()
+            self.assertEqual(native_result["result"], -403, native_result)
+            self.assertEqual(plus_result["result"], -403, plus_result)
+            run_native.assert_not_called()
+            run_plus.assert_not_called()
 
     def test_every_non_read_route_rejected_before_validation(self):
         self.guest()

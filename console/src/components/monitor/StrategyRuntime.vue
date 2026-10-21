@@ -14,6 +14,7 @@
     <template #default="{row}"><strong>{{row.name || row.id}}</strong><el-button v-if="canControl" link size="small" @click="rename(row)" :aria-label="'重命名策略 '+(row.name||row.id)">改名</el-button><small class="runtime-id">{{row.id}}</small></template>
    </el-table-column>
    <el-table-column label="引擎" width="70"><template #default="{row}">{{row.engine?.toUpperCase() || '—'}}</template></el-table-column>
+   <el-table-column label="计划与持仓" min-width="180"><template #default="{row}"><el-tag :type="row.new_strategy?'info':'success'" effect="plain">{{row.new_strategy?'新增实例':'已有策略'}}</el-tag><small class="runtime-reason">{{row.has_positions?'有持仓 · '+row.position_volume+'手':row.position_known?'账簿无持仓':'尚无持仓快照'}}</small><small class="runtime-reason">{{row.in_launch_plan?(row.plan_pending?'计划等待应用或下次启动':'已在启动计划'):'原入口／历史账簿，未加入页面计划'}}</small></template></el-table-column>
    <el-table-column label="决策状态" min-width="190">
     <template #default="{row}">
      <span :class="row.state==='running'?'runtime-running':''">{{row.pending?'等待进程回执':stateName(row.state)}}</span>
@@ -43,7 +44,7 @@
     </template>
    </el-table-column>
   </el-table>
-  <p class="runtime-note">两项控制可以同时启用。过滤期间策略仍可计算并更新理论仓位；解除过滤可能重新建立这些仓位，即使决策仍暂停。退仓进度请核对通道持仓、委托和成交。仅管理员可操作。</p>
+  <p class="runtime-note">两项控制可以同时启用。过滤期间策略仍可计算并更新理论仓位；解除过滤可能重新建立这些仓位，即使决策仍暂停。停止进程不会清空历史信号或自动平仓。退仓进度请核对通道持仓、委托和成交。仅管理员可操作。</p>
   </template>
  </section>
 </template>

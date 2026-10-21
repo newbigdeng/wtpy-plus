@@ -65,6 +65,7 @@ def main(entry):
     import fcntl
     from wtpy import WtEngine, EngineType
     from wtpy.StrategyRuntime import attach_strategy_control
+    from wtpy.monitor.RiskRuntime import attach_risk, live_account_provider
 
     root = Path(entry).resolve().parent
     os.chdir(root)
@@ -87,6 +88,9 @@ def main(entry):
             engine.init("", str(directory / "config.json"))
             engine.commitConfig()
             attach_strategy_control(engine, root / "generated/strategy-control")
+            engine._risk_channels = {row["id"]: row["trader"] for row in plan["strategies"]}
+            attach_risk(engine, plan.get("risk"), output=root / "generated/risk-events.jsonl",
+                        account_provider=live_account_provider(root, engine.query_trade_account))
             register_plan(engine, plan, directory)
             engine.run()
             stop.wait()

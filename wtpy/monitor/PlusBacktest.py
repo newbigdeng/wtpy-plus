@@ -17,6 +17,8 @@ import time
 import uuid
 from .TradeFinance import dataset_finance, effective_finance
 from .PlusExecution import EXECUTORS, effective_execution
+from .HistoryCatalog import dataset_entries, prepare_native_dataset, selection_bounds
+from .RiskLibrary import resolve_selection
 
 TERMINAL = frozenset(("completed", "stopped", "failed"))
 LIMITATIONS = [
@@ -106,6 +108,8 @@ def dataset_catalog(workspace):
                 raise ValueError("Plus数据集基础资料不完整："+identifier)
             choices = [x for x in choices if x["id"] != identifier]
             choices.append(item)
+    # Native storage is the source of truth; demo snippets remain explicitly labelled.
+    choices = [item for item in dataset_entries(workspace) if item["period"] == "tick" and item["rows"]] + choices
     return choices
 class PlusBacktestManager:
     def __init__(self, root, *, workspace="/workspace", max_concurrent=2):
@@ -124,14 +128,15 @@ class PlusBacktestManager:
                 task.update(status="failed", error="监控进程重启中断了此任务；未把残留结果视为完成。", updated_at=time.time())
                 write_json(path, task)
     def capabilities(self):
-        datasets = [{**{k:v for k,v in x.items() if k not in ("file", "basefiles", "kind")},
+        private = {"file", "files", "basefiles", "basefiles_map", "kind", "storage", "profile_root", "collector", "collectors", "storage_groups", "ticker", "exchange"}
+        datasets = [{**{k:v for k,v in x.items() if k not in private},
                      "finance": dataset_finance(x)} for x in dataset_catalog(self.workspace)]
         runtime = self.workspace / "artifacts/plus-native/libWtPorter.so"
         return {"engines": ["CTA", "HFT"], "executors": EXECUTORS, "datasets": datasets, "limitations": LIMITATIONS,
                 "max_concurrent": self.max_concurrent, "available": runtime.is_file(),
                 "route": ["Historical Tick", "WT DataWriter", "Live CTA/HFT Engine",
                           "CTA Local Executer / HFT Context", "TraderAdapter", "TraderMocker", "Native Returns"]}
-    def create(self, user, straid, strategy_code, engine_type, code, dataset, start=None, end=None, capital=1000000, period="m1", params=None, finance=None, execution=None):
+    def create(self, user, straid, strategy_code, engine_type, code, dataset, start=None, end=None, capital=1000000, period="m1", params=None, finance=None, execution=None, risk=None):
         kind = str(engine_type).upper()
         if kind not in ("CTA", "HFT"):
             raise ValueError("Plus目前支持CTA和HFT；UFT/SEL尚未接入对应实盘桥")
@@ -144,9 +149,8 @@ class PlusBacktestManager:
         if code != item["code"]:
             raise ValueError("合约必须与所选Tick数据集相同；连续合约须先准备对应映射")
         finance = effective_finance(item, finance)
-        start = int(start or item["start"]); end = int(end or item["end"])
-        if not item["start"] <= start <= end <= item["end"]:
-            raise ValueError("起止日期必须在所选数据集实际范围内")
+        start, end = selection_bounds(dict(item, rows=item.get("rows", item.get("ticks", 0))), start, end)
+        risk = resolve_selection(risk)
         execution = effective_execution(kind, start, end, execution)
         capital = float(capital)
         if not math.isfinite(capital) or capital <= 0 or capital > 1e12:
@@ -164,10 +168,13 @@ class PlusBacktestManager:
                 raise RuntimeError("Plus并发任务已达上限，请等待或停止现有任务")
             taskid = uuid.uuid4().hex
             folder = self.root / taskid;folder.mkdir(mode=0o700)
+            market_snapshot = prepare_native_dataset(self.workspace, dataset, start, end, folder) if item["kind"] == "native_ticks" else None
             now = time.time()
             task = {"id": taskid, "user": str(user), "straid": str(straid), "engine_type": kind,
                     "code": code, "dataset": item["id"], "market_source": item["source"], "start": start, "end": end, "capital": capital,
-                    "period": period, "params": params, "finance": finance, "execution": execution, "status": "queued", "processed": 0,
+                    "period": period, "params": params, "finance": finance, "execution": execution, "risk": risk,
+                    "market_snapshot": market_snapshot, "data_model": "recorded_tick" if item["source"] == "recorded" else "synthetic_demo",
+                    "status": "queued", "processed": 0,
                     "total": 0, "progress": 0, "orders": 0, "trades": 0,
                     "created_at": now, "updated_at": now, "error": "", "mode": "plus"}
             (folder / "MyStrategy.py").write_text(strategy_code, encoding="utf-8")
@@ -217,6 +224,8 @@ class PlusBacktestManager:
         report = read_json(path/"report.json", {}) or {}
         result = {key:report.get(key, []) for key in ("orders","trades","funds","positions","events","rejections")}
         result.update(task=task, route=report.get("route", self.capabilities()["route"]),
+                      risk=report.get("risk", {"selection":task.get("risk"), "events":[]}),
+                      data_model=report.get("data_model", task.get("data_model")),
                       limitations=report.get("limitations", LIMITATIONS if task.get("finance") else ["旧任务使用零手续费账簿；没有保证金或滑点模型，需重新运行以应用新参数。"]), summary=report.get("summary", {}),
                       log_tail=(path/"runner.log").read_text(encoding="utf-8",errors="replace")[-12000:] if (path/"runner.log").exists() else "")
         return result

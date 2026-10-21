@@ -72,8 +72,11 @@ class ManagedStrategyTests(unittest.TestCase):
         return self.client.post("/mgr/" + path, json=value).json()
 
     def plan(self, groupid="legacy", execution="twap"):
+        library = self.post("strategy_library_save", library_id="ImportedCta", name="CTA framework", source=SOURCE)
+        if library["result"] < 0:
+            library = self.post("strategy_library_get", library_id="ImportedCta")
         plan = self.post("strategy_plan", groupid=groupid)["plan"]
-        plan["strategies"] = [{"id": "trend", "source": SOURCE, "class_name": "ImportedCta", "enabled": True,
+        plan["strategies"] = [{"id": "trend", "library_id": "ImportedCta", "library_version": library["strategy"]["version"], "class_name": "ImportedCta", "enabled": True,
             "params": {"code": "SHFE.rb.2701"}, "trader": "paper", "execution": {"id": execution}}]
         return plan
 
@@ -178,7 +181,8 @@ class ManagedStrategyTests(unittest.TestCase):
     def test_hft_checks_native_channel_positions_and_latest_trade_snapshot(self):
         result = self.post("create_strategy_group", groupid="fast", name="HFT", template_groupid="legacy", engine_type="HFT")
         plan = result["plan"]
-        plan["strategies"] = [{"id": "fastone", "source": SOURCE.replace("BaseCtaStrategy", "BaseHftStrategy"),
+        library = self.post("strategy_library_save", library_id="ImportedHft", name="HFT framework", source=SOURCE.replace("BaseCtaStrategy", "BaseHftStrategy"))
+        plan["strategies"] = [{"id": "fastone", "library_id": "ImportedHft", "library_version": library["strategy"]["version"],
             "params": {"code": "SHFE.rb.2701"}, "trader": "paper"}]
         result = self.post("save_strategy_plan", groupid="fast", plan=plan, apply=True, confirm_takeover=True)
         self.assertEqual(result["result"], 0)
@@ -212,6 +216,70 @@ class ManagedStrategyTests(unittest.TestCase):
             response = self.client.post("/mgr/" + path, json={})
             self.assertEqual(response.status_code, 403)
             self.assertEqual(response.json()["code"], "GUEST_READ_ONLY")
+
+    def test_library_version_is_immutable_and_portfolio_cannot_replace_source(self):
+        first = self.post("strategy_library_save", library_id="trendLibrary", name="Trend", source=SOURCE)["strategy"]
+        plan = self.post("strategy_plan", groupid="legacy")["plan"]
+        plan["strategies"] = [{"id": "trend", "library_id": first["id"], "library_version": first["version"],
+            "params": {"code": "SHFE.rb.2701"}, "trader": "paper", "execution": {"id": "twap"}}]
+        saved = self.post("save_strategy_plan", groupid="legacy", plan=plan)
+        self.assertEqual(saved["result"], 0)
+        second = self.post("strategy_library_save", library_id=first["id"], name="Trend", source=SOURCE.replace("lots=1", "lots=2"), base_version=1)["strategy"]
+        self.assertEqual(second["version"], 2)
+        self.assertEqual(self.post("strategy_plan", groupid="legacy")["plan"]["strategies"][0]["source"], SOURCE)
+        old = self.post("strategy_library_get", library_id=first["id"], version=1)["strategy"]
+        self.assertEqual(old["source"], SOURCE)
+        attempted = saved["plan"]
+        attempted["strategies"][0]["source"] = SOURCE.replace("lots=1", "lots=9")
+        self.assertIn("不能上传或替换源码", self.post("save_strategy_plan", groupid="legacy", plan=attempted)["message"])
+        self.assertFalse((self.root / "should-not-execute").exists())
+        self.assertEqual(self.post("strategy_library_delete", library_id=first["id"], base_version=2)["result"], 0)
+        self.assertEqual(self.post("strategy_library")["strategies"], [])
+        self.assertEqual(self.post("strategy_library_get", library_id=first["id"], version=1)["strategy"]["source"], SOURCE)
+        attempted["strategies"][0].pop("source")
+        self.assertEqual(self.post("save_strategy_plan", groupid="legacy", plan=attempted)["result"], 0)
+
+    def test_existing_research_is_copied_without_deleting_or_executing_it(self):
+        from wtpy.monitor.WtBtMon import WtBtMon
+        folder = self.root / "research"
+        folder.mkdir()
+        monitor = WtBtMon(str(folder))
+        self.addCleanup(monitor.shutdown)
+        self.server.set_bt_mon(monitor)
+        strategy = monitor.add_strategy("owner", "Existing idea", "cta")
+        monitor.set_strategy_code("owner", strategy["id"], SOURCE)
+        self.assertEqual(self.post("strategy_library_research")["strategies"][0]["id"], strategy["id"])
+        copied = self.post("strategy_library_import_research", research_id=strategy["id"], library_id="ExistingCopy")
+        self.assertEqual(copied["result"], 0)
+        self.assertEqual(copied["strategy"]["source"], SOURCE)
+        self.assertTrue(monitor.has_strategy("owner", strategy["id"]))
+        self.assertFalse((self.root / "should-not-execute").exists())
+        self.assertIn("没有这个研究", self.post("strategy_library_import_research", research_id="outside", library_id="BadCopy")["message"])
+
+    def test_library_guest_does_not_receive_code_or_constructor_defaults(self):
+        self.post("strategy_library_save", library_id="LibraryGuest", name="Guest view", source=SOURCE)
+        self.post("guest")
+        self.assertNotIn("parameters", self.post("strategy_library")["strategies"][0])
+        self.assertNotIn("source", self.post("strategy_library_get", library_id="LibraryGuest")["strategy"])
+        for path in ("strategy_library_save", "strategy_library_delete", "strategy_library_template"):
+            self.assertEqual(self.client.post("/mgr/" + path, json={}).status_code, 403)
+
+    def test_legacy_and_new_rows_share_plan_and_runtime_status(self):
+        with patch.object(self.server.__data_mgr__, "get_strategies", return_value=["old"]):
+            result = self.post("save_strategy_plan", groupid="legacy", plan=self.plan())
+            self.assertEqual(result["result"], 0)
+            self.assertEqual(result["existing_strategies"][0]["id"], "old")
+            status = result["strategy_status"]
+            self.assertFalse(status["old"]["new_strategy"])
+            self.assertFalse(status["old"]["in_launch_plan"])
+            self.assertTrue(status["trend"]["new_strategy"])
+            self.assertTrue(status["trend"]["plan_pending"])
+            ledger = self.root / "legacy/generated/stradata/old.json"
+            ledger.write_text(json.dumps({"positions": [{"volume": -3}]}))
+            status = self.post("qrystra_runtime", groupid="legacy")["strategies"]
+            old = next(row for row in status if row["id"] == "old")
+            self.assertTrue(old["has_positions"])
+            self.assertEqual(old["position_volume"], 3)
 
 
 if __name__ == "__main__":

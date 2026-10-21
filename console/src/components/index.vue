@@ -107,6 +107,9 @@ export default {
                 {path:'/monitor',icon:'monitor',label:'监控中心',hint:'组合、通道与实时事件',show:this.isGuest || !this.isResearcher || this.isAdmin},
                 {path:'/schedule',icon:'schedule',label:'调度中心',hint:'进程与计划任务',show:this.isGuest || this.isAdmin},
                 {path:'/backtest',icon:'backtest',label:'在线回测',hint:'策略研究与历史检验',show:this.isGuest || this.isResearcher || this.isAdmin},
+                {path:'/strategies',icon:'book',label:'策略管理',hint:'策略库、版本与源码',show:true},
+                {path:'/history',icon:'folder',label:'历史数据',hint:'数据覆盖、导入与清理',show:true},
+                {path:'/risk-library',icon:'settings',label:'风控管理',hint:'可组合的风控规则',show:true},
             ].filter(item=>item.show)
         },
         currentPage() { return this.navItems.find(item=>item.path===this.$route.path) || (this.$route.path==='/admins'?{label:'用户管理',hint:'账户与访问权限'}:null) || (this.$route.path==='/api-manual'?{label:'API 手册',hint:'当前版本 Python 策略接口'}:{label:'工作台',hint:''}) },
@@ -249,7 +252,7 @@ export default {
 .wt-brand{width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:var(--wt-text);color:var(--wt-surface);border:0;border-radius:10px;font-size:20px;font-weight:650;letter-spacing:-2px;cursor:pointer}
 .wt-brand span{font-size:14px;align-self:flex-start;margin-top:5px;letter-spacing:0;color:var(--wt-surface)}
 .wt-brand-name{font-weight:600;font-size:12px;margin-top:10px;letter-spacing:-.2px}
-.wt-rail-nav{display:flex;flex-direction:column;gap:7px;margin-top:28px;width:100%;align-items:center}
+.wt-rail-nav{display:flex;flex-direction:column;gap:7px;margin:22px 0 16px;width:100%;align-items:center;min-height:0;overflow-y:auto;scrollbar-width:thin}.wt-rail-nav .wt-rail-link{flex-shrink:0}
 .wt-rail-link{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;width:52px;min-height:54px;border-radius:8px;text-decoration:none;color:var(--wt-muted);transition:background .15s,color .15s;position:relative}
 .wt-rail-link:hover{background:var(--wt-hover);color:var(--wt-text)}
 .wt-rail-link.active{background:var(--wt-selected);color:var(--wt-text)}

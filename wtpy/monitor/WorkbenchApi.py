@@ -22,6 +22,18 @@ def finite(value):
     if isinstance(value,float) and not math.isfinite(value): return None
     return value
 
+def dominant_contract(catalog, summaries):
+    """Use the latest stored market date, then open interest and volume."""
+    indexed={item["code"]:item for item in catalog if item["available"]}
+    valid=[row for row in summaries if row.get("code") in indexed
+           and isinstance(row.get("open_interest"),(int,float))
+           and math.isfinite(row["open_interest"]) and row["open_interest"]>=0]
+    if not valid:return next(iter(indexed.values()),catalog[0] if catalog else None)
+    latest=max(row["date"] for row in valid)
+    selected=max((row for row in valid if row["date"]==latest),
+                 key=lambda row:(row["open_interest"],row.get("volume") or 0,row["code"]))
+    return indexed[selected["code"]]
+
 def load_config(folder):
     for name in ("config.yaml","config.json"):
         path=folder/name
@@ -126,16 +138,13 @@ class WorkbenchFeed:
         contracts=base_json("contract")
         commodities=base_json("commodity")
         available=set()
-        freshness={}
-        for directory in ("rt/min1","rt/min5","his/min1","his/min5","his/day"):
+        for directory in ("rt/min1","rt/min5","rt/ticks","his/min1","his/min5","his/day"):
             base=storage/directory
             if base.is_dir():
                 for f in base.glob("*/*"):
                     if f.suffix in (".dmb",".dsb"):
                         identity=(f.parent.name,f.stem)
                         available.add(identity)
-                        if directory.startswith("rt/"):
-                            freshness[identity]=max(freshness.get(identity,0),f.stat().st_mtime_ns)
         catalog=[]
         for exchange, items in contracts.items():
             for ticker, info in items.items():
@@ -146,7 +155,13 @@ class WorkbenchFeed:
         catalog.sort(key=lambda item:(not item["available"],item["code"]))
         if replay:
             for item in catalog:item["name"]+=" · 回放（本地接收时间）"
-        selected=next((item for item in catalog if code in (item["code"],item["exchange"]+"."+item["ticker"])),None) if code else max((item for item in catalog if item["available"]),key=lambda item:freshness.get((item["exchange"],item["ticker"]),0),default=catalog[0] if catalog else None)
+        if code:
+            selected=next((item for item in catalog if code in (item["code"],item["exchange"]+"."+item["ticker"])),None)
+        else:
+            with self._lock:
+                summaries=self._read_market({"operation":"contract_summaries","storage":str(storage),
+                    "contracts":[{key:item[key] for key in ("code","exchange","ticker")} for item in catalog if item["available"]]})["summaries"]
+            selected=dominant_contract(catalog,summaries)
         if selected is None:
             return {"contracts":catalog if include_catalog else None,"bars":[],"quote":None,"code":code,"period":period,"market_message":"没有可读取的合约；请先让数据中台订阅合约","source":"组合 data.store"}
         exchange,ticker=selected["exchange"],selected["ticker"]
@@ -168,6 +183,7 @@ class WorkbenchFeed:
                 if len(self._cache)>64:self._cache.pop(next(iter(self._cache)))
             market["contracts"]=catalog if include_catalog else None
             market["fetched_at"]=int(time.time()*1000)
+            market["default_selection"]="最新已存行情交易日内，按持仓量选择；仅比较本机已采集合约"
             from .MarketSessions import session_status
             market.update(session_status(selected,base_json("session"),base_json("holiday")))
             return market

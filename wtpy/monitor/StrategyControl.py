@@ -79,6 +79,16 @@ def runtime_rows(data_mgr, dog, groupid):
     for item in status.get("strategies", []):
         if isinstance(item, dict) and item.get("id"):
             rows[str(item["id"])] = dict(item)
+    observed = set(rows)
+    folder = Path(group["path"]) / "managed-strategies"
+    draft = _read(folder / "draft.json", {})
+    applied = _read(folder / "applied.json", {})
+    active = _read(folder / "revisions" / str(applied.get("revision", "")) / "plan.json", {}) if applied.get("revision") else {}
+    planned = {row["id"]: row for row in draft.get("strategies", [])}
+    launched = {row["id"]: row for row in active.get("strategies", [])}
+    for sid, item in planned.items():
+        rows.setdefault(sid, {"id": sid, "name": item.get("name", sid),
+            "engine": draft.get("engine_type", "UNKNOWN"), "source": "plan"})
     filters = filter_snapshot(group)
     for row in rows.values():
         row_filter_state(row, filters, running)
@@ -92,6 +102,20 @@ def runtime_rows(data_mgr, dog, groupid):
                 "组合进程未运行" if not running else
                 "控制桥无新鲜心跳，无法确认状态" if managed else
                 "原生 C++ 策略或未接入控制桥的 Python 策略，暂不支持单独暂停")})
+        sid = row["id"]
+        ledger_path = Path(group["path"]) / "generated/stradata" / (sid + ".json")
+        ledger = _read(ledger_path, {})
+        positions = ledger.get("positions", [])
+        volume = sum(abs(float(item.get("volume", item.get("volumn", 0)) or 0))
+                     for item in positions if isinstance(item, dict))
+        in_plan = sid in planned
+        pending = in_plan and (sid not in launched or any(planned[sid].get(key) != launched[sid].get(key)
+            for key in ("enabled", "library_id", "library_version", "params", "trader", "execution")))
+        row.update({"in_launch_plan": in_plan, "in_applied_plan": sid in launched,
+            "new_strategy": sid not in observed, "has_positions": volume > 0,
+            "position_volume": volume, "position_known": ledger_path.exists(),
+            "plan_pending": pending, "library_id": planned.get(sid, {}).get("library_id", ""),
+            "library_version": planned.get(sid, {}).get("library_version")})
     names = _read(_directory(group) / "names.json", {})
     for row in rows.values():
         if isinstance(names.get(row["id"]), str):

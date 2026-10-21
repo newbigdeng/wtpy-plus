@@ -1,0 +1,2 @@
+# Optional public futures K-line importer. No historical futures Tick feed.
+akshare==1.19.1

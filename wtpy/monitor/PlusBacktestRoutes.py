@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from fastapi import Body, Request
-from .Roles import RESEARCH_ROLES, can_research_read
+from .Roles import RESEARCH_ROLES, can_research_read, group_allowed
 
 
 def register_plus_routes(app, bt_mon, check_auth, manager=None):
@@ -23,10 +23,13 @@ def register_plus_routes(app, bt_mon, check_auth, manager=None):
 
     @app.post("/bt/plus/capabilities", tags=["Plus 仿真回测"])
     def capabilities(request: Request, token: str = Body(None, embed=True)):
-        _, error = authorize(request, token, read=True)
+        user, error = authorize(request, token, read=True)
         if error:
             return error
-        return {"result": 0, "message": "OK", **manager.capabilities()}
+        value = manager.capabilities()
+        value["datasets"] = [row for row in value["datasets"]
+            if not row.get("groupid") or group_allowed(user, row["groupid"])]
+        return {"result": 0, "message": "OK", **value}
 
     @app.post("/bt/plus/run", tags=["Plus 仿真回测"])
     def run(request: Request, straid: str = Body(..., embed=True),
@@ -36,6 +39,7 @@ def register_plus_routes(app, bt_mon, check_auth, manager=None):
             period: str = Body("m1", embed=True),
             params: dict = Body(None, embed=True), finance: dict = Body(None, embed=True),
             execution: dict = Body(None, embed=True),
+            risk: dict = Body(None, embed=True),
             token: str = Body(None, embed=True)):
         user, error = authorize(request, token)
         if error:
@@ -47,7 +51,11 @@ def register_plus_routes(app, bt_mon, check_auth, manager=None):
         if strategy is None:
             return {"result": -2, "message": "策略不存在或不属于当前账号"}
         engine_type = str(strategy.get("strategy_type", "cta")).upper()
-        if engine_type not in manager.capabilities().get("engines", []):
+        capability = manager.capabilities()
+        selected = next((row for row in capability["datasets"] if row["id"] == dataset), None)
+        if selected is None or (selected.get("groupid") and not group_allowed(user, selected["groupid"])):
+            return {"result": -403, "message": "历史数据集不存在或无访问权限"}
+        if engine_type not in capability.get("engines", []):
             return {"result": -3, "message": "当前 Plus 回测尚不支持 " + engine_type + "；请选择可用引擎"}
         source = bt_mon.get_strategy_code(login, straid)
         if source is None:
@@ -56,7 +64,7 @@ def register_plus_routes(app, bt_mon, check_auth, manager=None):
             task = manager.create(user=login, straid=straid, strategy_code=source,
                                   engine_type=engine_type, code=code, dataset=dataset,
                                   start=start, end=end, capital=capital, period=period,
-                                  params=params, finance=finance, execution=execution)
+                                  params=params, finance=finance, execution=execution, risk=risk)
         except (OSError, ValueError, RuntimeError, SyntaxError) as exc:
             return error_response(exc)
         return {"result": 0, "message": "Plus 仿真任务已提交", "task": task}

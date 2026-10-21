@@ -2,6 +2,7 @@
 import json
 import sys
 import logging
+import time
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
 try:
@@ -12,7 +13,52 @@ except ImportError:
 from wtpy.wrapper.WtDtHelper import WtDataHelper
 from wtpy.monitor.WorkbenchApi import finite
 
+_rank_cache={}
+
+def contract_summaries(payload):
+    """Rank actual stored bars, never filesystem modification timestamps."""
+    storage=Path(payload["storage"])
+    contracts=payload["contracts"]
+    key=(str(storage),tuple((item["exchange"],item["ticker"]) for item in contracts))
+    cached=_rank_cache.get(key)
+    if cached and time.monotonic()-cached[0]<30:
+        return cached[1]
+    helper=WtDataHelper()
+    rows=[]
+    for item in contracts:
+        snapshots=[]
+        # Real-time bars are small. Avoid loading years of minute history just
+        # to choose the first chart when current bars are already available.
+        for kind,suffix,reader,directories in (("rt",".dmb",helper.read_dmb_bars,("min1","min5")),
+                                              ("his",".dsb",helper.read_dsb_bars,("day","min5","min1"))):
+            if kind=="his" and snapshots:break
+            for directory in directories:
+                path=storage/kind/directory/item["exchange"]/(item["ticker"]+suffix)
+                if not path.is_file():continue
+                bars=reader(str(path))
+                if bars is None or not len(bars):continue
+                record=bars.ndarray[-1]
+                stamp=int(record["date"])*10000 if directory=="day" else 199000000000+int(record["time"])
+                snapshots.append({"code":item["code"],"date":int(record["date"]),"time":stamp,
+                                  "open_interest":float(record["open_interest"]),"volume":float(record["volume"])})
+                if kind=="his":break
+        if not snapshots:
+            path=storage/"rt/ticks"/item["exchange"]/(item["ticker"]+".dmb")
+            if path.is_file():
+                ticks=helper.read_dmb_ticks(str(path))
+                if ticks is not None and len(ticks):
+                    tick=ticks.ndarray[-1]
+                    snapshots.append({"code":item["code"],"date":int(tick["trading_date"]),
+                        "time":int(tick["action_date"])*10000+int(tick["action_time"])//100000,
+                        "open_interest":float(tick["open_interest"]),"volume":float(tick["total_volume"])})
+        if snapshots:rows.append(max(snapshots,key=lambda row:row["time"]))
+    result={"summaries":finite(rows)}
+    _rank_cache.clear()
+    _rank_cache[key]=(time.monotonic(),result)
+    return result
+
 def read_market(payload):
+    if payload.get("operation")=="contract_summaries":return contract_summaries(payload)
     storage=Path(payload["storage"]);exchange=payload["exchange"];ticker=payload["ticker"]
     directory=payload["directory"];period=payload["period"];count=payload["count"]
     helper=WtDataHelper()
