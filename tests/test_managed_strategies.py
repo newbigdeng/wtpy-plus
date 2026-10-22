@@ -84,6 +84,7 @@ class ManagedStrategyTests(unittest.TestCase):
         result = self.post("analyze_strategy", groupid="legacy", source=SOURCE)
         self.assertEqual(result["classes"][0]["name"], "ImportedCta")
         self.assertFalse((self.root / "should-not-execute").exists())
+
         self.assertEqual(analyze(SOURCE)[0]["parameters"][2]["default"], "m1")
         sel = SOURCE.replace("BaseCtaStrategy", "BaseSelStrategy")
         self.assertFalse(analyze(sel)[0]["supported"])
@@ -93,6 +94,43 @@ class ManagedStrategyTests(unittest.TestCase):
         plan["strategies"][0]["params"] = {}
         self.assertIn("缺少策略参数", self.post("save_strategy_plan", groupid="legacy", plan=plan)["message"])
         self.assertFalse((self.root / "should-not-execute").exists())
+
+    def test_contract_preview_is_stopped_only_and_does_not_save_or_start(self):
+        plan = self.plan()
+        row = plan["strategies"][0]
+        row["params"].update(capital_limit=30000, margin_fraction=2/3, risk_fraction=.005)
+        # This fixture accepts these ordinary named parameters, without importing it.
+        source = SOURCE.replace("period='m1',lots=1", "period='m1',lots=1,capital_limit=0,margin_fraction=.001,risk_fraction=0")
+        entry = self.post("strategy_library_save", library_id="BudgetCta", name="预算策略", source=source)["strategy"]
+        row.update(library_id=entry["id"],library_version=entry["version"])
+        request = dict(groupid="legacy",strategyid="trend",contracts=["SHFE.rb.2701","SHFE.rb.2705"],plan=plan)
+        catalog = [dict(code=code,exchange="SHFE",product="rb") for code in request["contracts"]]
+        with patch("wtpy.monitor.MarketSubscriptions.MarketSubscriptions.context", return_value=dict(catalog=catalog)):
+            value = self.post("preview_strategy_contracts",**request)
+        self.assertEqual(value["result"],0,value)
+        self.assertEqual(len(value["instances"]),2)
+        self.assertFalse(value["process_started"])
+        self.assertFalse((self.root/"legacy/managed-strategies/draft.json").exists())
+        self.assertFalse(self.server._dog.isRunning("legacy"))
+        proposed=value["plan"]
+        with patch.object(self.server._dog,"is_process_running",return_value=True):
+            value = self.post("preview_strategy_contracts",**request)
+        self.assertIn("先停止",value["message"])
+        saved=self.post("save_strategy_plan",groupid="legacy",plan=proposed)
+        self.assertEqual(saved["result"],0,saved)
+        self.assertEqual({r["contract_group"] for r in saved["plan"]["strategies"]},{"trend"})
+        self.assertEqual([r["params"]["code"] for r in saved["plan"]["strategies"]],request["contracts"])
+
+    def test_applied_contract_display_does_not_follow_unapplied_draft_or_expose_params(self):
+        value = self.post("save_strategy_plan",groupid="legacy",plan=self.plan(),apply=True,confirm_takeover=True)
+        draft = value["plan"];draft["strategies"][0]["params"]["code"]="SHFE.rb.2705"
+        value = self.post("save_strategy_plan",groupid="legacy",plan=draft)
+        runtime = value["strategy_status"]["trend"]
+        self.assertEqual(runtime["applied_contracts"],["SHFE.rb.2701"])
+        self.assertEqual(runtime["planned_contracts"],["SHFE.rb.2705"])
+        self.assertTrue(runtime["plan_pending"])
+        # A public contract label is separate from the administrator-only parameter object.
+        self.assertEqual(value["plan"]["strategies"][0]["contracts"],["SHFE.rb.2705"])
 
     def test_draft_publish_routing_and_explicit_takeover(self):
         result = self.post("save_strategy_plan", groupid="legacy", plan=self.plan())
@@ -113,6 +151,12 @@ class ManagedStrategyTests(unittest.TestCase):
         self.assertEqual((self.root / "legacy/run.py").read_text(), "# original observation entry\n")
         revision = self.root / "legacy/managed-strategies/revisions" / result["applied_revision"]
         config = json.loads((revision / "config.json").read_text())
+        logcfg = json.loads((revision / "logcfg.json").read_text())
+        self.assertEqual(logcfg["root"]["sinks"][0]["filename"], "Logs/Runner.log")
+        logs = self.root / "legacy/Logs"
+        logs.mkdir()
+        (logs / "Runner_2026-10-21.log").write_text("managed runner connected\n")
+        self.assertIn("managed runner connected", self.post("qrylogs", id="legacy", type="all")["content"])
         self.assertEqual(config["routers"], [{"strategy": "trend", "executer": "managed-trend"}])
         self.assertEqual(config["executers"][0]["trader"], "paper")
         self.assertEqual(config["executers"][0]["policy"]["default"]["name"], "WtExeFact.WtTWapExeUnit")
@@ -208,14 +252,51 @@ class ManagedStrategyTests(unittest.TestCase):
         self.assertEqual(self.post("guest")["result"], 0)
         response = self.client.post("/mgr/strategy_plan", json={"groupid": "legacy"})
         self.assertNotIn("source", response.json()["plan"]["strategies"][0])
+        self.assertNotIn("params", response.json()["plan"]["strategies"][0])
+        self.assertEqual(response.json()["plan"]["strategies"][0]["contracts"],["SHFE.rb.2701"])
         self.assertNotIn("private-secret", response.text)
         self.assertFalse(response.json()["can_manage"])
         catalog = self.post("strategy_catalog", groupid="legacy")
         self.assertEqual(catalog["channels"], [{"id": "paper", "label": "paper"}])
-        for path in ("save_strategy_plan", "analyze_strategy", "create_strategy_group"):
+        for path in ("save_strategy_plan", "analyze_strategy", "create_strategy_group", "preview_strategy_contracts"):
             response = self.client.post("/mgr/" + path, json={})
             self.assertEqual(response.status_code, 403)
             self.assertEqual(response.json()["code"], "GUEST_READ_ONLY")
+
+    def test_group_risk_draft_keeps_applied_rules_and_remains_stopped(self):
+        with patch.dict(os.environ, {"WT_RISK_LIBRARY": str(self.root / "risk-library")}):
+            rule = {"id": "position", "name": "持仓上限", "type": "max_position_lots",
+                    "mode": "pretrade", "params": {"limit": 3}}
+            first = self.post("risk-library/save", rule=rule)["rule"]
+            plan = self.plan()
+            plan["risk"] = {"rules": [{"id": first["id"], "version": first["version"]}]}
+            applied = self.post("save_strategy_plan", groupid="legacy", plan=plan,
+                                apply=True, confirm_takeover=True)
+            self.assertEqual(applied["result"], 0)
+            self.assertEqual(applied["applied_risk"]["rules"][0]["params"]["limit"], 3)
+            self.assertFalse(applied["running"])
+            second = self.post("risk-library/save", rule={**first, "params": {"limit": 5}})["rule"]
+            plan = applied["plan"]
+            plan["risk"] = {"rules": [{"id": second["id"], "version": second["version"]}]}
+            saved = self.post("save_strategy_plan", groupid="legacy", plan=plan, apply=False)
+            self.assertEqual(saved["result"], 0)
+            self.assertEqual(saved["plan"]["risk"]["rules"][0]["params"]["limit"], 5)
+            self.assertEqual(saved["applied_risk"]["rules"][0]["params"]["limit"], 3)
+            self.assertEqual(saved["applied_revision"], applied["applied_revision"])
+            self.assertTrue(saved["pending_changes"])
+            self.assertFalse(self.server._dog.isRunning("legacy"))
+            with patch.object(self.server._dog, "is_process_running", return_value=True):
+                rejected = self.post("save_strategy_plan", groupid="legacy", plan=saved["plan"])
+            self.assertIn("先停止组合", rejected["message"])
+            self.assertEqual(self.post("guest")["result"], 0)
+            visible = self.post("strategy_plan", groupid="legacy")
+            self.assertEqual(visible["applied_risk"]["rules"][0]["id"], first["id"])
+            self.assertEqual(visible["applied_risk"]["rules"][0]["version"], first["version"])
+            self.assertNotIn("params", visible["applied_risk"]["rules"][0])
+            self.assertFalse(visible["can_manage"])
+            self.assertNotIn("source", visible["plan"]["strategies"][0])
+            response = self.client.post("/mgr/save_strategy_plan", json={"groupid": "legacy", "plan": saved["plan"]})
+            self.assertEqual(response.status_code, 403)
 
     def test_library_version_is_immutable_and_portfolio_cannot_replace_source(self):
         first = self.post("strategy_library_save", library_id="trendLibrary", name="Trend", source=SOURCE)["strategy"]
@@ -263,6 +344,46 @@ class ManagedStrategyTests(unittest.TestCase):
         self.assertNotIn("source", self.post("strategy_library_get", library_id="LibraryGuest")["strategy"])
         for path in ("strategy_library_save", "strategy_library_delete", "strategy_library_template"):
             self.assertEqual(self.client.post("/mgr/" + path, json={}).status_code, 403)
+
+    def test_empty_applied_plan_excludes_flat_history_but_keeps_ledger(self):
+        with patch.object(self.server.__data_mgr__, "get_strategies", return_value=["old"]):
+            plan = self.post("strategy_plan", groupid="legacy")["plan"]
+            result = self.post("save_strategy_plan", groupid="legacy", plan=plan,
+                               apply=True, confirm_takeover=True)
+            self.assertEqual(result["result"], 0)
+            self.assertEqual(result["existing_strategies"], [])
+            self.assertEqual(self.post("qrystra_runtime", groupid="legacy")["strategies"], [])
+            self.assertTrue((self.root / "legacy/generated/stradata/old.json").exists())
+            self.assertFalse(result["running"])
+            self.assertFalse(result["applied_trading_enabled"])
+
+    def test_orphaned_positions_remain_visible_under_empty_plan(self):
+        with patch.object(self.server.__data_mgr__, "get_strategies", return_value=["old"]):
+            plan = self.post("strategy_plan", groupid="legacy")["plan"]
+            result = self.post("save_strategy_plan", groupid="legacy", plan=plan,
+                               apply=True, confirm_takeover=True)
+            self.assertEqual(result["result"], 0)
+            ledger = self.root / "legacy/generated/stradata/old.json"
+            ledger.write_text(json.dumps({"positions": [{"volume": 2}]}))
+            rows = self.post("qrystra_runtime", groupid="legacy")["strategies"]
+            self.assertEqual(rows[0]["id"], "old")
+            self.assertTrue(rows[0]["has_positions"])
+
+    def test_flat_theory_does_not_hide_broker_positions_or_missing_ledger(self):
+        with patch.object(self.server.__data_mgr__, "get_strategies", return_value=["old"]):
+            plan = self.post("strategy_plan", groupid="legacy")["plan"]
+            result = self.post("save_strategy_plan", groupid="legacy", plan=plan,
+                               apply=True, confirm_takeover=True)
+            self.assertEqual(result["result"], 0)
+            folder = self.root / "legacy/generated/traders/paper"
+            folder.mkdir(parents=True)
+            snapshot = folder / "rtdata.json"
+            snapshot.write_text(json.dumps({"positions": [{"long": {"newvol": 2}}]}))
+            self.assertEqual(self.post("qrystra_runtime", groupid="legacy")["strategies"][0]["id"], "old")
+            snapshot.write_text(json.dumps({"positions": []}))
+            (self.root / "legacy/generated/stradata/old.json").unlink()
+            rows = self.post("qrystra_runtime", groupid="legacy")["strategies"]
+            self.assertFalse(rows[0]["position_known"])
 
     def test_legacy_and_new_rows_share_plan_and_runtime_status(self):
         with patch.object(self.server.__data_mgr__, "get_strategies", return_value=["old"]):

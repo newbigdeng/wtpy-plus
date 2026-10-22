@@ -4,7 +4,7 @@ const baseURL = process.env.WT_FRONTEND_URL || 'http://127.0.0.1:4173'
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: 'console.spec.js',
+  testMatch: '*.spec.js',
   timeout: 30000,
   workers: 1,
   retries: 0,
@@ -13,6 +13,7 @@ export default defineConfig({
   use: {
     baseURL,
     headless: true,
+    channel: process.env.WT_BROWSER_CHANNEL || undefined,
     viewport: { width: 1600, height: 1000 },
     screenshot: 'off',
     trace: 'off'

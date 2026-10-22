@@ -83,7 +83,8 @@ def main(entry):
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
         signal.signal(signal.SIGINT, lambda *_: stop.set())
         kind = getattr(EngineType, "ET_" + plan["engine_type"])
-        engine = WtEngine(kind, str(directory / "logcfg.json"), "generated")
+        # The native porter prefixes logCfg with its current working directory.
+        engine = WtEngine(kind, str((directory / "logcfg.json").relative_to(root)), "generated")
         try:
             engine.init("", str(directory / "config.json"))
             engine.commitConfig()

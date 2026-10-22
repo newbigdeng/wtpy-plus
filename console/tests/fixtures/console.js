@@ -9,6 +9,7 @@ export async function fixture(page) {
       '/mgr/session':{userinfo:{loginid:'localadmin',name:'本地验收用户',role:'superman'}},
       '/mgr/login':{userinfo:{loginid:'localadmin',name:'本地验收用户',role:'superman'}},
       '/mgr/qrygrp':{groups},'/mgr/qrystras':{strategies:[]},'/mgr/qrychnls':{channels:[]},
+      '/mgr/risk-library/list':{rules:[],types:{}},
       '/mgr/qrypos':{positions:[]},'/mgr/qryportpos':{positions:[]},'/mgr/qryportperfs':{performance:{}},'/mgr/qryportfilters':{filters:{strategy_filters:{},code_filters:{},channel_filters:{}}},
       '/mgr/qrygrpdir':{tree:{label:'root',children:[{label:'config.json',path:'config.json',isfile:true}]}},
       '/mgr/qrygrpfile':{content:'{"enabled":true}'},'/mgr/cmtgrpfile':{},
@@ -24,7 +25,7 @@ export async function fixture(page) {
   await page.getByPlaceholder('用户名').fill('localadmin')
   await page.getByPlaceholder('密码',{exact:true}).fill('test-only-local-password')
   await page.getByRole('button',{name:/登\s*录/}).click()
-  await expect(page.getByRole('button',{name:'验收组合一',exact:true})).toBeVisible()
+  await expect(page.locator('.wt-group-title h1')).toHaveText('验收组合一')
   await expect(page.locator('.wt-topbar .wt-push-status')).toContainText('推送已连接')
   await page.getByRole('tab',{name:'数据',exact:true}).click()
   await page.getByRole('button',{name:'运行日志',exact:false}).click()

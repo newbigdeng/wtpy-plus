@@ -6,6 +6,7 @@ try:
 except ImportError:  # Other monitor features remain importable on Windows.
     fcntl = None
 import json
+import math
 import os
 from pathlib import Path
 import time
@@ -14,6 +15,7 @@ import uuid
 from fastapi import Body, Request
 from wtpy.StrategyRuntime import atomic_json, SEMANTICS
 from .StrategyFilters import filter_snapshot, row_filter_state, set_strategy_filter
+from .StrategyContracts import contract_codes
 
 def _read(path, fallback):
     try:
@@ -84,6 +86,8 @@ def runtime_rows(data_mgr, dog, groupid):
     draft = _read(folder / "draft.json", {})
     applied = _read(folder / "applied.json", {})
     active = _read(folder / "revisions" / str(applied.get("revision", "")) / "plan.json", {}) if applied.get("revision") else {}
+    appconf = dog.getAppConf(groupid) or {}
+    managed_entry = bool(applied.get("revision") and "run_managed.py" in appconf.get("param", ""))
     planned = {row["id"]: row for row in draft.get("strategies", [])}
     launched = {row["id"]: row for row in active.get("strategies", [])}
     for sid, item in planned.items():
@@ -105,18 +109,42 @@ def runtime_rows(data_mgr, dog, groupid):
         sid = row["id"]
         ledger_path = Path(group["path"]) / "generated/stradata" / (sid + ".json")
         ledger = _read(ledger_path, {})
-        positions = ledger.get("positions", [])
-        volume = sum(abs(float(item.get("volume", item.get("volumn", 0)) or 0))
-                     for item in positions if isinstance(item, dict))
+        try:
+            volume = sum(abs(float(item.get("volume", item.get("volumn"))))
+                         for item in ledger.get("positions", []))
+            position_known = isinstance(ledger.get("positions"), list) and math.isfinite(volume)
+        except (TypeError, ValueError, AttributeError):
+            volume, position_known = 0, False
         in_plan = sid in planned
         pending = in_plan and (sid not in launched or any(planned[sid].get(key) != launched[sid].get(key)
             for key in ("enabled", "library_id", "library_version", "params", "trader", "execution")))
         row.update({"in_launch_plan": in_plan, "in_applied_plan": sid in launched,
             "new_strategy": sid not in observed, "has_positions": volume > 0,
-            "position_volume": volume, "position_known": ledger_path.exists(),
+            "position_volume": volume, "position_known": position_known,
             "plan_pending": pending, "library_id": planned.get(sid, {}).get("library_id", ""),
             "library_version": planned.get(sid, {}).get("library_version")})
+        row.update(applied_contracts=contract_codes(launched.get(sid, {}).get("params", {})),
+                   planned_contracts=contract_codes(planned.get(sid, {}).get("params", {})),
+                   contracts_source="已应用的启动配置" if sid in launched else "尚无已应用合约配置")
     names = _read(_directory(group) / "names.json", {})
+    # An applied plan owns the next/current process. Keep orphaned positions
+    # visible, but do not present old, flat ledgers as loaded strategies.
+    if managed_entry:
+        broker_positions = False
+        for path in (Path(group["path"]) / "generated/traders").glob("*/rtdata.json"):
+            positions = _read(path, {}).get("positions")
+            try:
+                volume = sum(abs(float(item.get(side, {}).get(key, 0) or 0))
+                             for item in positions for side in ("long", "short")
+                             for key in ("newvol", "prevol"))
+            except (TypeError, ValueError, AttributeError):
+                volume = float("nan")
+            if not isinstance(positions, list) or not math.isfinite(volume) or volume > 0:
+                broker_positions = True
+                break
+        rows = {sid: row for sid, row in rows.items()
+                if sid in planned or sid in launched or row["has_positions"]
+                or not row["position_known"] or broker_positions}
     for row in rows.values():
         if isinstance(names.get(row["id"]), str):
             row["name"] = names[row["id"]]

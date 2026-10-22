@@ -17,6 +17,7 @@ from .PlusExecution import EXECUTORS, effective_execution
 from .Roles import can_admin, group_allowed
 from .StrategySource import analyze, identifier
 from .StrategyLibrary import StrategyLibrary
+from .StrategyContracts import contract_codes, contract_plan
 
 ENTRY = "from wtpy.monitor.ManagedStrategyRunner import main\n\nif __name__ == '__main__':\n    main(__file__)\n"
 def _read(path, default=None):
@@ -155,6 +156,8 @@ def _normalize(plan, channels, library=None, previous=None):
             "library_id": library_id or "", "library_version": version,
             "params": params, "trader": trader, "execution": execution,
             "enabled": item.get("enabled", True) is True, "slippage": slippage, "agent": item.get("agent", True) is True}
+        if item.get("contract_group"):
+            row["contract_group"] = identifier(item["contract_group"])
         result["strategies"].append(row)
     from .RiskLibrary import resolve_selection
     result["risk"] = resolve_selection(plan.get("risk"))
@@ -240,6 +243,9 @@ def register_managed_routes(app, data_mgr, dog, check_auth, deploy_dir):
         draft = _read(folder / "draft.json", _empty(group))
         applied = _read(folder / "applied.json", {})
         active_plan = _read(folder / "revisions" / applied["revision"] / "plan.json", {}) if applied.get("revision") else {}
+        draft = deepcopy(draft)
+        for row in draft["strategies"]:
+            row["contracts"] = contract_codes(row.get("params", {}))
         conf = dog.getAppConf(groupid) or {}
         managed = "run_managed.py" in conf.get("param", "") and bool(applied)
         if not can_admin(info):
@@ -257,6 +263,7 @@ def register_managed_routes(app, data_mgr, dog, check_auth, deploy_dir):
             "running": bool(dog.isRunning(groupid)), "can_manage": can_admin(info),
             "applied_revision": applied.get("revision", ""),
             "applied_trading_enabled": bool(active_plan.get("trading_enabled")),
+            "applied_risk": deepcopy(active_plan.get("risk", {"schema": 1, "rules": []})),
             "pending_changes": draft["revision"] != applied.get("revision", ""),
             "activation_required": not managed, "process_started": False}
 
@@ -295,6 +302,34 @@ def register_managed_routes(app, data_mgr, dog, check_auth, deploy_dir):
         except ValueError as exc:
             return {"result": -2, "message": str(exc)}
 
+    @app.post("/mgr/preview_strategy_contracts", tags=["组合策略配置"])
+    def preview_contracts(request: Request, groupid: str = Body(..., embed=True),
+                          strategyid: str = Body(..., embed=True), contracts: list = Body(..., embed=True),
+                          plan: dict = Body(..., embed=True), token: str = Body(None, embed=True)):
+        info, error = authorize(request, token, groupid, True)
+        if error:
+            return error
+        try:
+            from .MarketSubscriptions import MarketSubscriptions
+            with channel_transition_lock:
+                group = data_mgr.get_group(groupid)
+                folder = _state(group)
+                with _stopped(dog, groupid, folder):
+                    previous = _read(folder / "draft.json", _empty(group))
+                    if plan.get("revision", "") != previous.get("revision", ""):
+                        raise ValueError("计划已被其他页面更新，请重新读取")
+                    channels = {row["id"] for row in _base(group).get("traders", []) if row.get("active", True)}
+                    normalized = _normalize(plan, channels, library, previous)
+                    catalog = MarketSubscriptions(data_mgr, dog).context(groupid)["catalog"]
+                    preview = contract_plan(normalized, strategyid, contracts, catalog)
+                    active = _read(folder / "applied.json", {})
+                    before = _read(folder / "revisions" / active["revision"] / "plan.json", {}) if active.get("revision") else {}
+                    _protect_positions(data_mgr, groupid, before, preview["plan"], False)
+                    return {"result": 0, **preview, "process_started": False,
+                            "message": "合约与均分预算已预览，尚未保存或应用"}
+        except (ValueError, OSError, KeyError, TypeError, yaml.YAMLError) as exc:
+            return {"result": -3, "message": str(exc) if isinstance(exc, ValueError) else "合约计划预览失败"}
+
     @app.post("/mgr/save_strategy_plan", tags=["组合策略配置"])
     def save(request: Request, groupid: str = Body(..., embed=True), plan: dict = Body(..., embed=True), apply: bool = Body(False, embed=True), confirm_takeover: bool = Body(False, embed=True), token: str = Body(None, embed=True)):
         info, error = authorize(request, token, groupid, True)
@@ -326,7 +361,7 @@ def register_managed_routes(app, data_mgr, dog, check_auth, deploy_dir):
                             (revision / "strategies" / (row["id"] + ".py")).write_text(row["source"], encoding="utf-8")
                         atomic_json(revision / "plan.json", normalized)
                         atomic_json(revision / "config.json", native_config(base, normalized, Path(group["path"]).resolve()))
-                        atomic_json(revision / "logcfg.json", {"root": {"level": "info", "async": True, "sinks": [{"type": "daily_file_sink", "filename": "logs/managed.log", "pattern": "%v"}]}})
+                        atomic_json(revision / "logcfg.json", {"root": {"level": "info", "async": True, "sinks": [{"type": "daily_file_sink", "filename": "Logs/Runner.log", "pattern": "[%Y.%m.%d %H:%M:%S - %l ] %v"}]}})
                         entry = Path(group["path"]) / "run_managed.py"
                         if entry.exists() and entry.read_text(encoding="utf-8") != ENTRY:
                             raise ValueError("run_managed.py已存在自定义内容，请先移走该文件")

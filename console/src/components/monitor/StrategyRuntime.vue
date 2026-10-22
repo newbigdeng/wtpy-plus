@@ -14,6 +14,7 @@
     <template #default="{row}"><strong>{{row.name || row.id}}</strong><el-button v-if="canControl" link size="small" @click="rename(row)" :aria-label="'重命名策略 '+(row.name||row.id)">改名</el-button><small class="runtime-id">{{row.id}}</small></template>
    </el-table-column>
    <el-table-column label="引擎" width="70"><template #default="{row}">{{row.engine?.toUpperCase() || '—'}}</template></el-table-column>
+   <el-table-column label="运行合约" min-width="180"><template #default="{row}"><el-tag v-for="code in row.applied_contracts||[]" :key="code" effect="plain">{{code}}</el-tag><small class="runtime-reason">{{row.applied_contracts?.length?(row.state==='stopped'?'启动配置 · 进程已停止':'已应用的启动配置'):'未识别到合约配置'}}</small><small v-if="row.plan_pending" class="runtime-reason">草稿：{{row.planned_contracts?.join('、')||'无'}}</small></template></el-table-column>
    <el-table-column label="计划与持仓" min-width="180"><template #default="{row}"><el-tag :type="row.new_strategy?'info':'success'" effect="plain">{{row.new_strategy?'新增实例':'已有策略'}}</el-tag><small class="runtime-reason">{{row.has_positions?'有持仓 · '+row.position_volume+'手':row.position_known?'账簿无持仓':'尚无持仓快照'}}</small><small class="runtime-reason">{{row.in_launch_plan?(row.plan_pending?'计划等待应用或下次启动':'已在启动计划'):'原入口／历史账簿，未加入页面计划'}}</small></template></el-table-column>
    <el-table-column label="决策状态" min-width="190">
     <template #default="{row}">

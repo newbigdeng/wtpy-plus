@@ -335,6 +335,7 @@ class RiskRuntime:
 def attach_risk(engine, selection=None, output="risk-events.jsonl", account_provider=None):
     """Call before adding/setting strategies. Works with live and fast engines."""
     runtime = RiskRuntime(selection, output, account_provider)
+    engine._account_provider = runtime.provider
     if not runtime.rules:
         return runtime
     for name, kind in (("add_cta_strategy", "CTA"), ("add_hft_strategy", "HFT"), ("add_sel_strategy", "SEL"),

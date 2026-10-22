@@ -41,7 +41,7 @@ def native_worker(payload):
     return result
 
 
-def _inspect_many(entries):
+def _inspect_many(entries, refresh=False):
     pending, signatures = [], {}
     now = time.monotonic()
     with _lock:
@@ -49,9 +49,14 @@ def _inspect_many(entries):
             signature = tuple((p, Path(p).stat().st_size, Path(p).stat().st_mtime_ns) for p in item["files"])
             signatures[item["id"]] = signature
             old = _cache.get(item["id"])
-            # Real-time mmap files change continuously; refresh inventory at most
-            # every 30 s rather than starting a native process per HTTP request.
-            if old and ((old[0] == signature and not any(p.endswith(".dmb") for p in item["files"])) or now-old[1] < 30):
+            # Throttle only changes to the continuously written realtime files.
+            # A completed import replaces DSB immediately, even within the TTL.
+            history = tuple(row for row in signature if row[0].endswith(".dsb"))
+            old_history = tuple(row for row in old[0] if row[0].endswith(".dsb")) if old else None
+            has_realtime = any(p.endswith(".dmb") for p in item["files"])
+            cached = old and ((old[0] == signature and not has_realtime) or
+                              (history == old_history and now-old[1] < 30))
+            if cached and not refresh:
                 item.update(old[2])
             else:
                 pending.append(dict(id=item["id"],period=item["period"],files=item["files"]))
@@ -68,7 +73,7 @@ def _inspect_many(entries):
     return entries
 
 
-def dataset_entries(workspace="/workspace", manifest_path=None):
+def dataset_entries(workspace="/workspace", manifest_path=None, refresh=False):
     """IDs are configuration identities, never user paths or arbitrary hashes."""
     entries, contexts, owners = [], [], {}
     for groupid, profiles in load_profiles(manifest_file(workspace, manifest_path)).items():
@@ -123,7 +128,7 @@ def dataset_entries(workspace="/workspace", manifest_path=None):
                         formats=sorted({path.suffix[1:].upper() for path in files}),
                         model="recorded_tick" if period == "tick" else "closed_bar_only")
                     entries.append(item)
-    return _inspect_many(entries)
+    return _inspect_many(entries, refresh=refresh)
 
 
 def public_dataset(item):
@@ -195,8 +200,8 @@ def register_history_catalog_routes(app, data_mgr, dog, check_auth, manifest_pat
             return None, dict(result=-403, message="游客模式不支持操作" if control else "无查看权限")
         return user, None
 
-    def entries(user):
-        return [item for item in dataset_entries(workspace, manifest) if group_allowed(user, item["groupid"])]
+    def entries(user, refresh=False):
+        return [item for item in dataset_entries(workspace, manifest, refresh=refresh) if group_allowed(user, item["groupid"])]
 
     def blocked(item, user):
         if not all(group_allowed(user, groupid) for groupid in item["storage_groups"]):
@@ -216,12 +221,12 @@ def register_history_catalog_routes(app, data_mgr, dog, check_auth, manifest_pat
 
     @app.post("/mgr/history/catalog", tags=["历史数据"])
     @app.post("/mgr/history/datasets", tags=["历史数据"])
-    def catalog(request: Request, token: str = Body(None, embed=True)):
+    def catalog(request: Request, refresh: bool = Body(False, embed=True), token: str = Body(None, embed=True)):
         user, error = authorize(request, token)
         if error:
             return error
         result = []
-        for item in entries(user):
+        for item in entries(user, refresh=refresh):
             reason = blocked(item, user)
             result.append(dict(public_dataset(item), delete_reason=reason,
                 can_delete=can_operate(user) and not reason and any(Path(p).suffix==".dsb" for p in item["files"])))

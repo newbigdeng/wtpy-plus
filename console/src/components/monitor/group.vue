@@ -9,7 +9,7 @@
                 <el-tab-pane label="行情数据" name="market"/>
             </el-tabs>
             <div class="wt-data-content">
-                <TradingTerminal v-if="selData==='terminal'" :groupid="groupid" @overview="$emit('overview',$event)"/>
+                <TradingTerminal v-if="selData==='terminal'" :groupid="groupid" @overview="$emit('overview',$event)" @subscriptions="handleClickTab({props:{name:'market'}})"/>
                 <StrategyRuntime v-if="selData==='runtime'" :groupid="groupid" :running="groupinfo.running" @changed="$emit('plan-changed',$event)"/>
                 <RiskPanel v-if="selData==='risk'" :groupid="groupid"/>
                 <DataWorkbench v-if="selData==='data'" :groupid="groupid"/>

@@ -53,6 +53,7 @@ class CtaContext:
         self.get_detail_profit = self.stra_get_detail_profit
         self.get_first_entertime = self.stra_get_first_entrytime
         self.get_fund_data = self.stra_get_fund_data
+        self.get_account_snapshot = self.stra_get_account_snapshot
         self.get_last_entrytag = self.stra_get_last_entrytag
         self.get_last_entrytime = self.stra_get_last_entrytime
         self.get_last_exittime = self.stra_get_last_exittime
@@ -204,6 +205,18 @@ class CtaContext:
         @return 浮动盈亏
         '''
         return self.__wrapper__.cta_get_position_profit(self.__id__, stdCode)
+
+    def stra_get_account_snapshot(self) -> dict:
+        """当前柜台或回测原生账户快照；valid=False时不能据此计算仓位。
+
+        equity包含账户本金；stra_get_fund_data返回策略盈亏，不能代替它。
+        由运行入口绑定数据源，此处不计算第二份账户账簿。
+        """
+        provider = getattr(self.__engine__, "_account_provider", None)
+        if provider is None:
+            return {"valid": False, "source": "运行入口未绑定账户数据源"}
+        channel = getattr(self.__engine__, "_risk_channels", {}).get(self.__sname__, "")
+        return dict(provider(self, channel))
 
     def stra_get_fund_data(self, flag:int = 0) -> float:
         '''

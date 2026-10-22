@@ -1,0 +1,183 @@
+/* Keep the desktop workspace intact; phones use the whole screen for content. */
+@media (max-width: 700px) {
+  #app { height: 100dvh; }
+  #app .wt-shell {
+    position: relative;
+    padding-bottom: calc(68px + env(safe-area-inset-bottom));
+  }
+  #app .wt-shell .wt-rail {
+    position: fixed;
+    inset: auto 0 0;
+    width: 100%;
+    height: calc(68px + env(safe-area-inset-bottom));
+    padding: 4px 0 env(safe-area-inset-bottom);
+    border: 0;
+    border-top: 1px solid var(--wt-line);
+    z-index: 10;
+  }
+  #app .wt-shell .wt-rail .wt-brand,
+  #app .wt-shell .wt-brand-name,
+  #app .wt-shell .wt-rail-bottom { display: none; }
+  #app .wt-shell .wt-rail-nav {
+    flex-direction: row;
+    justify-content: space-around;
+    gap: 0;
+    margin: 0;
+    padding: 0 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    height: 100%;
+  }
+  #app .wt-shell .wt-rail-link {
+    width: auto;
+    min-width: 58px;
+    min-height: 54px;
+    padding: 5px 6px;
+    flex: 1 0 58px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+  }
+  #app .wt-shell .wt-rail-label { font-size: 10px; }
+  #app .wt-shell .wt-rail-link.active::before { display: none; }
+  #app .wt-shell .wt-topbar { min-height: 54px; padding: 0 10px; gap: 6px; }
+  #app .wt-shell .wt-breadcrumb { min-width: 0; flex: 1; }
+  #app .wt-shell .wt-breadcrumb > span { display: none; }
+  #app .wt-shell .wt-breadcrumb strong { overflow: hidden; text-overflow: ellipsis; }
+  #app .wt-shell .wt-topbar-actions { gap: 3px; flex-shrink: 0; }
+  #app .wt-shell .wt-command-button,
+  #app .wt-shell .wt-theme-toggle,
+  #app .wt-shell .wt-notification-button {
+    min-width: 38px;
+    height: 40px;
+    justify-content: center;
+    padding: 5px;
+    border-color: transparent;
+  }
+  #app .wt-shell .wt-command-button > span,
+  #app .wt-shell .wt-theme-toggle > span { display: none; }
+  #app .wt-shell .wt-command-button .wt-icon { width: 17px; height: 17px; }
+  #app .wt-shell .wt-avatar { width: 36px; height: 36px; }
+
+  #app .wt-shell .wt-group-header { padding: 10px 12px; min-height: 0; gap: 8px; }
+  #app .wt-shell .wt-sidebar-toggle { min-width: 40px; min-height: 40px; }
+  #app .wt-shell .wt-sidebar-toggle > span { display: none; }
+  #app .wt-shell .wt-group-title { flex: 1; }
+  #app .wt-shell .wt-group-actions { justify-content: flex-start; gap: 6px; }
+  #app .wt-shell .wt-group-content { padding: 0 12px; }
+  #app .wt-shell .wt-project-sidebar { max-width: calc(100vw - 32px); }
+  #app .wt-shell .wt-project-search input { font-size: 16px; }
+  #app .wt-shell .wt-primary-tabs .el-tabs__item { padding: 0 12px; font-size: 12px; }
+  #app .wt-shell .wt-data-panel { min-height: 0; }
+  #app .wt-shell .wt-data-content { min-height: 400px; padding-top: 8px; }
+  #app .wt-shell .wt-log-toolbar { flex-wrap: wrap; min-height: 48px; gap: 6px 10px; }
+  #app .wt-shell .wt-log-events { display: none; }
+  #app .wt-shell .wt-log-toggle { min-height: 40px; }
+  #app .wt-shell .wt-log-panel.collapsed { flex-basis: 48px !important; max-height: 48px; }
+
+  #app .wt-shell .terminal { min-height: 0; }
+  #app .wt-shell .terminal-cockpit { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  #app .wt-shell .terminal-cockpit > div { min-width: 0; padding: 9px; }
+  #app .wt-shell .terminal-cockpit strong { font-size: 15px; overflow-wrap: anywhere; white-space: normal; }
+  #app .wt-shell .terminal-cockpit > div:last-child { grid-column: 1 / -1; }
+  #app .wt-shell .terminal-toolbar { gap: 8px; }
+  #app .wt-shell .terminal-toolbar .contract-select { width: 100%; }
+  #app .wt-shell .terminal-indicators { width: 100%; flex-wrap: wrap; gap: 5px 12px; }
+  #app .wt-shell .terminal-indicators .el-checkbox__label { font-size: 12px; }
+  #app .wt-shell .terminal-toolbar .history-range { flex: 1 1 100%; width: 100%; }
+  #app .wt-shell .terminal-quote { gap: 10px; padding: 12px 0; }
+  #app .wt-shell .quote-main { gap: 9px; flex-wrap: wrap; }
+  #app .wt-shell .quote-details { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  #app .wt-shell .quote-time { width: 100%; }
+  #app .wt-shell .terminal-history { font-size: 11px; line-height: 1.7; }
+  #app .wt-shell .terminal-source { font-size: 10px; }
+  #app .wt-shell .terminal-bottom { min-height: 0; overflow: visible; }
+  #app .wt-shell .terminal-equity { flex: 0 0 280px !important; padding: 8px 0; }
+  #app .wt-shell .terminal-ledger { min-width: 0; flex: 0 0 380px; min-height: 380px; }
+  #app .wt-shell .terminal-account { padding: 4px 0; }
+  #app .wt-shell .account-card { min-width: 0; width: 100%; overflow-wrap: anywhere; }
+  #app .wt-shell .indicator-note { padding-left: 0; padding-right: 0; }
+  #app .wt-shell .trade-risk header,
+  #app .wt-shell .risk-header,
+  #app .wt-shell .runtime-heading { flex-wrap: wrap; gap: 10px; }
+  #app .wt-shell .risk-panel,
+  #app .wt-shell .runtime-panel { padding: 8px 0; }
+  #app .wt-shell .risk-metrics article,
+  #app .wt-shell .risk-card { padding: 14px; }
+
+  #app .wt-shell .data-toolbar > div > div:first-child { min-width: 0; max-width: 100%; }
+  #app .wt-shell .data-tools { flex: 1 1 100% !important; justify-content: flex-start; }
+  #app .wt-shell .data-tools .el-row { flex-wrap: wrap; }
+  #app .wt-shell .data-table-tools .data-table-search { flex: 1 1 100%; width: 100%; }
+  #app .wt-shell .data-table-tools .data-table-dates { flex: 1 1 100%; width: 100%; min-width: 0; }
+  #app .wt-shell .data-table > .el-pagination { flex-wrap: wrap; gap: 8px 0; }
+  #app .wt-shell .data-table > .el-pagination .el-pagination__sizes { display: none; }
+
+  #app .wt-shell .wt-research { position: relative; }
+  #app .wt-shell .wt-research > .wt-research-sidebar { display: none; }
+  #app .wt-shell .wt-research.strategy-list-open > .wt-research-sidebar {
+    display: block;
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: min(300px, calc(100vw - 32px));
+    z-index: 8;
+    border-right: 1px solid var(--wt-line);
+  }
+  #app .wt-shell .wt-research.strategy-list-open > .wt-research-mask {
+    display: block;
+    position: absolute;
+    inset: 0;
+    border: 0;
+    background: #0004;
+    z-index: 7;
+  }
+  #app .wt-shell .wt-research > .wt-resize-divider { display: none; }
+  #app .wt-shell .wt-research-picker { display: inline-flex; gap: 6px; min-height: 40px; font-size: 12px; }
+  #app .wt-shell .wt-research-content { padding: 10px 12px; }
+  #app .wt-shell .wt-research-top { flex-wrap: wrap; flex-basis: auto; min-height: 64px; padding-bottom: 8px; }
+  #app .wt-shell .wt-research-top > div { min-width: 0; flex: 1; }
+  #app .wt-shell .wt-research-top h1 { display: block; font-size: 16px; overflow-wrap: anywhere; }
+  #app .wt-shell .wt-page-kicker { display: none; }
+  #app .wt-shell .wt-mode-buttons { width: 100%; }
+  #app .wt-shell .wt-mode-buttons button { flex: 1; padding: 8px; font-size: 12px; }
+  #app .wt-shell .wt-mode-buttons button span { width: 100%; text-align: left; line-height: 1.6; }
+  #app .wt-shell .wt-research-tabs { gap: 14px; overflow-x: auto; flex-shrink: 0; }
+  #app .wt-shell .wt-research-tabs button { flex-shrink: 0; }
+  #app .wt-shell .wt-save-state { display: none; }
+  #app .wt-shell .plus-heading,
+  #app .wt-shell .plus-detail-heading,
+  #app .wt-shell .plus-task-heading { flex-wrap: wrap; gap: 8px; }
+  #app .wt-shell .plus-config,
+  #app .wt-shell .plus-custom-fees { grid-template-columns: minmax(0, 1fr); }
+  #app .wt-shell .history-manager,
+  #app .wt-shell .risk-library { padding: 16px 12px; }
+  #app .wt-shell .history-manager header,
+  #app .wt-shell .risk-library header,
+  #app .wt-shell .history-filters { flex-wrap: wrap; gap: 10px; }
+  #app .wt-shell .history-manager header > div,
+  #app .wt-shell .history-filters .el-input { width: 100%; }
+  #app .wt-shell .history-filters .el-select { flex: 1; }
+
+  #app .wt-shell .wt-icon-button { min-width: 36px; min-height: 36px; }
+  #app .wt-workspace .el-button { min-height: 36px; }
+  .el-checkbox { min-height: 36px; height: auto; }
+  .el-checkbox__label { white-space: normal; line-height: 1.6; }
+  .el-radio-button__inner { min-height: 36px; display: inline-flex; align-items: center; }
+  .el-input__inner,
+  .el-range-input,
+  .el-select__input,
+  .el-textarea__inner { font-size: 16px; }
+  .el-input__wrapper,
+  .el-select__wrapper,
+  .el-date-editor.el-input__wrapper { min-height: 38px; }
+  .el-dialog { max-width: calc(100vw - 24px); margin-top: 5dvh; }
+  .el-dialog__body { overflow-wrap: anywhere; }
+  .el-drawer { max-width: 100vw; }
+  .el-drawer__body { padding: 14px; }
+  .el-message-box { max-width: calc(100vw - 24px); }
+  .el-popover.el-popper { max-width: calc(100vw - 24px); }
+  .el-date-range-picker { width: min(360px, calc(100vw - 24px)) !important; }
+  .el-date-range-picker .el-picker-panel__body { min-width: 0; max-height: 70dvh; overflow-y: auto; }
+  .el-date-range-picker__content { width: 100%; float: none; padding: 12px; }
+  .el-date-range-picker__content.is-left { border-right: 0; border-bottom: 1px solid var(--wt-line); }
+}

@@ -1,6 +1,6 @@
 <template>
-  <div class="wt-research">
-    <aside class="wt-research-sidebar" :style="{flex:'0 0 '+sidebarWidth+'px'}" aria-label="回测策略列表">
+  <div class="wt-research" :class="{'strategy-list-open':showStrategyList}">
+    <aside id="wt-research-strategies" class="wt-research-sidebar" :style="{flex:'0 0 '+sidebarWidth+'px'}" aria-label="回测策略列表">
       <div class="wt-research-heading"><span>策略研究</span><button class="wt-icon-button" aria-label="刷新策略列表" @click="refreshStras"><WtIcon name="refresh"/></button><button class="wt-icon-button" aria-label="新建策略" @click="onAddStrategy"><WtIcon name="plus"/></button></div>
       <el-input v-model="search" placeholder="搜索策略" clearable aria-label="搜索回测策略"><template #prefix><WtIcon name="search" style="width:14px"/></template></el-input>
       <div class="wt-strategy-count">{{filteredStrategies.length}} 个策略 · CTA / HFT / SEL</div>
@@ -13,9 +13,11 @@
       </div>
       <div class="wt-research-note">CTA 是持仓驱动，HFT 是委托驱动，SEL 是定时选股。类型决定 Mocker 与回调。</div>
     </aside>
+    <button v-if="showStrategyList" class="wt-research-mask" aria-label="关闭策略列表" @click="showStrategyList=false"/>
     <ResizableDivider v-model="sidebarWidth" :min="200" :max="440" storage-key="wt.backtest.sidebar" label="调整策略列表宽度"/>
     <section class="wt-research-content">
       <header class="wt-research-top">
+        <button class="wt-icon-button wt-research-picker" aria-controls="wt-research-strategies" :aria-expanded="showStrategyList" aria-label="选择回测策略" @click="showStrategyList=!showStrategyList"><WtIcon name="folder"/><span>策略</span></button>
         <div><div class="wt-page-kicker">RESEARCH / BACKTEST</div><h1>{{curStra?.name||'在线回测'}}<span v-if="curStra" class="wt-type-badge">{{strategyType.toUpperCase()}}</span></h1></div>
         <el-button v-if="curStra" link @click="renameStrategy" aria-label="重命名研究策略">重命名</el-button><router-link class="wt-manual-link" :to="{path:'/api-manual',query:{type:strategyType}}" target="_blank"><WtIcon name="book"/>API 手册 ↗</router-link>
       </header>
@@ -80,7 +82,7 @@ import {useSessionStore} from '@/store.js'
 import RiskSelection from '@/components/common/RiskSelection.vue'
 export default {
   name:'Backtest',components:{codemirror,WtIcon,ResizableDivider,BTComp,PlusResearch,RiskSelection},
-  data(){return{library:[],showLibrary:false,librarySelected:'',datasets:[],risk:{rules:[]},sidebarWidth:264,editorHeight:Math.max(200,Math.min(460,window.innerHeight*.43)),search:'',strategies:[],strategyTypes:[],strasOnWay:false,showCreate:false,creating:false,createForm:{name:'',strategy_type:'cta'},showBTCfg:false,launching:false,saving:false,curStra:null,curBT:null,backtests:[],content:'',content_bak:'',selData:'editor',backtestMode:'fast',showRunLog:false,detail:null,btConfig:{dataset:'',startTime:new Date(2026,9,12),endTime:new Date(2026,9,12),capital:500000,slippage:0,fill_model:'causal_touch',event_delay:0,participation_rate:0},cmOptions:{mode:'python',lineWrapping:false,indentUnit:4,extraKeys:{'Ctrl-S':()=>this.onSaveCode()}}}},
+  data(){return{library:[],showLibrary:false,librarySelected:'',datasets:[],risk:{rules:[]},showStrategyList:false,sidebarWidth:264,editorHeight:Math.max(200,Math.min(460,window.innerHeight*.43)),search:'',strategies:[],strategyTypes:[],strasOnWay:false,showCreate:false,creating:false,createForm:{name:'',strategy_type:'cta'},showBTCfg:false,launching:false,saving:false,curStra:null,curBT:null,backtests:[],content:'',content_bak:'',selData:'editor',backtestMode:'fast',showRunLog:false,detail:null,btConfig:{dataset:'',startTime:new Date(2026,9,12),endTime:new Date(2026,9,12),capital:500000,slippage:0,fill_model:'causal_touch',event_delay:0,participation_rate:0},cmOptions:{mode:'python',lineWrapping:false,indentUnit:4,extraKeys:{'Ctrl-S':()=>this.onSaveCode()}}}},
   computed:{
     fastDataset(){return this.datasets.find(row=>row.id===this.btConfig.dataset)},
     eligibleDatasets(){return this.datasets.filter(row=>row.rows>0&&(this.strategyType!=='hft'||row.period==='tick'))},
@@ -109,7 +111,7 @@ export default {
     num(value){return(Number(value)||0).toFixed(2)},profitClass(value){return Number(value)>0?'wt-up':Number(value)<0?'wt-down':''},
     fmtTime(value){if(!value)return '—';const text=String(value);return text.slice(0,4)+'.'+text.slice(4,6)+'.'+text.slice(6,8)+(text.length>8?' '+text.slice(8,10)+':'+text.slice(10,12):'')},
     statusText(info){return{running:'运行中',completed:'已完成',failed:'失败',stopped:'已停止',interrupted:'已中断'}[info?.status]||'历史记录'},
-    async selectStrategy(item){if(this.curStra?.id===item.id){this.selData='editor';return}if(this.dirty){try{await this.$confirm('当前代码尚未保存，切换后将放弃这些修改。','切换策略',{confirmButtonText:'放弃并切换',cancelButtonText:'继续编写',type:'warning'})}catch{return}}this.onOpenStrategy(item)},
+    async selectStrategy(item){if(this.curStra?.id===item.id){this.showStrategyList=false;this.selData='editor';return}if(this.dirty){try{await this.$confirm('当前代码尚未保存，切换后将放弃这些修改。','切换策略',{confirmButtonText:'放弃并切换',cancelButtonText:'继续编写',type:'warning'})}catch{return}}this.showStrategyList=false;this.onOpenStrategy(item)},
     onOpenStrategy(item){this.curStra=item;this.curBT=null;this.backtests=[];this.detail=null;this.selData=this.backtestMode==='plus'?'plus':'editor';this.content='';this.content_bak='';localStorage.setItem('wt.backtest.selected',item.id);const id=item.id;this.$api.getBtStraCode(id,result=>{if(this.curStra?.id!==id)return;if(result.result<0)this.$message.error('拉取策略代码失败：'+result.message);else{this.content=result.content||'';this.content_bak=this.content}});this.refreshBacktests()},
     refreshStras(){this.strasOnWay=true;this.$api.getBtStrategies(result=>{this.strasOnWay=false;if(result.result<0){this.$message.error(result.message);return}this.strategies=result.strategies||[];if(this.curStra&&!this.strategies.some(s=>s.id===this.curStra.id)){this.curStra=null;this.content='';this.content_bak='';this.backtests=[];this.curBT=null}if(!this.curStra){const saved=localStorage.getItem('wt.backtest.selected');const selected=this.strategies.find(s=>s.id===saved);if(selected)this.onOpenStrategy(selected)}})},
     refreshBacktests(){if(!this.curStra)return;const id=this.curStra.id;this.$api.getBacktests(id,result=>{if(this.curStra?.id!==id)return;if(result.result<0){this.$message.error(result.message);return}this.backtests=result.backtests||[];if(this.curBT){const found=this.backtests.find(bt=>bt.id===this.curBT.id);if(found)this.curBT=found}})},
@@ -141,6 +143,7 @@ export default {
 }
 </script>
 <style scoped>
+.wt-research-mask,.wt-research-picker{display:none}
 .wt-research{height:100%;display:flex;min-width:0;overflow:hidden}.wt-strategy-count{font-size:10px;color:var(--wt-muted);margin:14px 0 12px}.wt-stra-metrics{justify-content:space-between;color:var(--wt-muted);font-variant-numeric:tabular-nums}.wt-stra-metrics b{font-weight:400;margin-left:3px}
 .wt-type-badge{display:inline-flex;align-items:center;background:var(--wt-hover);color:var(--wt-muted);font:10px/18px var(--wt-mono);border-radius:4px;padding:0 5px;letter-spacing:.2px;white-space:nowrap}.wt-research-note{font-size:11px;color:var(--wt-muted);line-height:1.8;margin:20px 0 0}
 .wt-research-content{display:flex;flex-direction:column}.wt-research-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex:0 0 60px}.wt-page-kicker{font-size:9px;color:var(--wt-muted);letter-spacing:1.6px;margin-bottom:7px}h1{font-size:18px;font-weight:550;margin:0;display:flex;align-items:center;gap:12px}.wt-manual-link{display:flex;gap:7px;align-items:center;color:var(--wt-muted);text-decoration:none;font-size:11px}.wt-manual-link .wt-icon{width:15px;height:15px}

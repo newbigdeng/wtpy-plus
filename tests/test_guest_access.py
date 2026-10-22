@@ -77,6 +77,27 @@ class GuestAccessTests(unittest.TestCase):
         self.assertEqual(self.client.post("/mgr/qrygrp", json={}).json()["result"], 0)
         self.assertEqual(self.client.get("/openapi.json").status_code, 404)
 
+    def test_guest_risk_view_keeps_public_status_without_private_parameters(self):
+        folder = Path(self.temp.name) / "risk-view"
+        folder.mkdir()
+        (folder / "config.json").write_text(json.dumps({"env": {"name": "cta",
+            "riskmon": {"active": True, "base_amount": 1000000}}, "traders": []}))
+        self.server.__data_mgr__.add_group({"id": "riskview", "name": "Risk view",
+            "path": str(folder), "info": "", "gtype": "cta", "datmod": "mannual", "env": "product", "mqurl": ""})
+        self.owner()
+        owner = self.client.post("/mgr/qryrisk_state", json={"groupid": "riskview"}).json()
+        self.assertEqual(owner["result"], 0, owner)
+        self.assertTrue(owner["native"]["active"])
+        self.assertEqual(owner["native"]["params"]["base_amount"], 1000000)
+        self.guest()
+        guest = self.client.post("/mgr/qryrisk_state", json={"groupid": "riskview"}).json()
+        self.assertEqual(guest["result"], 0, guest)
+        self.assertTrue(guest["native"]["active"])
+        self.assertNotIn("params", guest["native"])
+        self.assertNotIn("broker", guest["snapshot"])
+        self.assertFalse(guest["can_control"])
+        self.assertFalse(guest["can_operate"])
+
     def test_new_library_routes_are_read_only_and_hide_uploaded_source(self):
         self.owner()
         source = 'from wtpy import BaseCtaStrategy\nclass TestLibrary(BaseCtaStrategy):\n    def __init__(self, name, code="private_code"): super().__init__(name)\n'

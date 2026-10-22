@@ -9,8 +9,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from wtpy.WtCoreDefs import WTSBarStruct, WTSTickStruct
 from wtpy.wrapper.WtDtHelper import WtDataHelper
-from wtpy.monitor.HistoryCatalog import dataset_entries, prepare_native_dataset, register_history_catalog_routes
-from wtpy.monitor.HistoryDataWorker import dataset_records
+from wtpy.monitor.HistoryCatalog import dataset_entries, prepare_native_dataset, register_history_catalog_routes, _inspect_many
+from wtpy.monitor.HistoryDataWorker import dataset_records, merge
 
 
 class HistoryCatalogTests(unittest.TestCase):
@@ -59,6 +59,38 @@ class HistoryCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"没有行情"):
             prepare_native_dataset(self.root,self.identifier,20261017,20261018,folder)
 
+    def test_imported_history_updates_cached_catalog_immediately(self):
+        self.assertEqual(dataset_entries(self.root)[0]["start"],202610160901)
+        bar=dict(date=20260803,time=202608030901-199000000000,
+                 open=3290,high=3300,low=3280,close=3295,vol=10)
+        result=merge(dict(storage=str(self.profile/"FUT_Data"),exchange="SHFE",ticker="rb2701",
+            period="m1",start_date=20260801,end_date=20260831,bars=[bar]),WtDataHelper())
+        self.assertEqual(result["rows"],1)
+        # No sleep or manual cache expiry: an imported DSB must be visible now.
+        row=dataset_entries(self.root)[0]
+        self.assertEqual((row["rows"],row["start"]),(7,202608030901))
+
+    def test_imported_daily_data_does_not_create_minute_or_tick_history(self):
+        bars=[dict(date=day,open=3290,high=3300,low=3280,close=3295,vol=10)
+              for day in (20260803,20260901)]
+        merge(dict(storage=str(self.profile/"FUT_Data"),exchange="SHFE",ticker="rb2701",
+            period="d",start_date=20260801,end_date=20260930,bars=bars),WtDataHelper())
+        rows={row["period"]:row for row in dataset_entries(self.root)}
+        self.assertEqual(set(rows),{"m1","d"})
+        self.assertEqual((rows["d"]["rows"],rows["d"]["start"]),(2,202608031500))
+        self.assertEqual(rows["m1"]["start"],202610160901)
+
+    def test_explicit_refresh_bypasses_realtime_inventory_ttl(self):
+        realtime=self.root/"realtime.dmb";realtime.write_bytes(b"native-worker-placeholder")
+        item=dict(id="test_realtime_refresh",period="m1",files=[str(realtime)])
+        first=dict(rows=1,start=202610210901,end=202610210901,dates=[20261021])
+        second=dict(rows=2,start=202610210901,end=202610210902,dates=[20261021])
+        with patch("wtpy.monitor.HistoryCatalog.native_worker",side_effect=[{"entries":{item["id"]:first}},{"entries":{item["id"]:second}}]) as worker:
+            self.assertEqual(_inspect_many([dict(item)])[0]["rows"],1)
+            self.assertEqual(_inspect_many([dict(item)])[0]["rows"],1)
+            self.assertEqual(_inspect_many([dict(item)],refresh=True)[0]["rows"],2)
+            self.assertEqual(worker.call_count,2)
+
     def test_unknown_dataset_does_not_fall_back(self):
         with self.assertRaisesRegex(ValueError,"不存在"):
             prepare_native_dataset(self.root,"../../private",20261016,20261019,self.root)
@@ -98,6 +130,12 @@ class HistoryCatalogTests(unittest.TestCase):
                 result=self.make_client(role,running,active).post("/mgr/history/delete_preview",json={"id":self.identifier}).json()
                 self.assertLess(result["result"],0)
         self.assertTrue((self.profile/"FUT_Data/his/min1/SHFE/rb2701.dsb").exists())
+
+    def test_catalog_refresh_requests_fresh_coverage(self):
+        with patch("wtpy.monitor.HistoryCatalog.dataset_entries",wraps=dataset_entries) as inspect:
+            result=self.make_client().post("/mgr/history/catalog",json={"refresh":True}).json()
+            self.assertEqual(result["entries"][0]["rows"],6)
+            self.assertTrue(inspect.call_args.kwargs["refresh"])
 
     def test_preview_is_bound_to_object_and_rechecked(self):
         client=self.make_client()

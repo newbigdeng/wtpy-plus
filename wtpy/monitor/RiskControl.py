@@ -95,7 +95,7 @@ def native_config(group):
                   and config.get("name", "SimpleRiskMon") == "SimpleRiskMon")
     return dict(engine=str(env.get("name", "")).upper(),
         supported=str(env.get("name", "")).lower() == "cta" and compatible,
-        configured=bool(config), params=values, restart_required=True,
+        configured=bool(config), active=values["active"] is True, params=values, restart_required=True,
         runtime_confirmed=False,
         reason="仅 CTA 引擎支持此原生目标倍率配置；HFT/UFT 不适用" if str(env.get("name", "")).lower() != "cta" else
                "原生 SimpleRiskMon 仅启动时读取；保存不表示当前进程已采用参数" if compatible else
