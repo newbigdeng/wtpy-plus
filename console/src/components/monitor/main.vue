@@ -20,10 +20,11 @@
                 <div class="wt-group-title"><h1>{{curGroup?curGroup.name:'监控中心'}}</h1><div class="wt-group-meta" v-if="curGroup"><span>{{curGroup.gtype?.toUpperCase()}} 组合</span><span>·</span><span>{{curGroup.datmod==='auto'?'实时推送':'文件读取'}}</span></div></div>
                 <div class="wt-group-actions" v-if="curGroup">
                     <ProcessControl :id="curGroup.id" :name="curGroup.name" :running="curGroup.running" kind="group" :disabled="!canOperate" @changed="refreshProcesses"/>
-                    <el-button v-if="isAdmin" size="small" @click="$refs.group.openConfig()">配置</el-button><el-button size="small" @click="handleViewGrop">组合信息</el-button>
-                    <el-button v-if="isAdmin" size="small" @click="handleClickSchedule">调度</el-button>
-                    <el-dropdown trigger="click" @command="handleGrpCmd"><el-button size="small" aria-label="组合管理">管理<WtIcon name="down"/></el-button><template #dropdown><el-dropdown-menu>
-                        <el-dropdown-item command="addgrp">添加组合</el-dropdown-item>
+                    <el-dropdown trigger="click" @command="handleGrpCmd"><el-button size="small" aria-label="组合管理">组合设置<WtIcon name="down"/></el-button><template #dropdown><el-dropdown-menu>
+                        <el-dropdown-item command="info">组合信息</el-dropdown-item>
+                        <el-dropdown-item v-if="isAdmin" command="config">配置</el-dropdown-item>
+                        <el-dropdown-item v-if="isAdmin" command="schedule">调度</el-dropdown-item>
+                        <el-dropdown-item divided command="addgrp">添加组合</el-dropdown-item>
                         <el-dropdown-item command="registergrp">登记已有运行目录</el-dropdown-item>
                         <el-dropdown-item v-if="isAdmin" command="renamegrp">重命名组合</el-dropdown-item>
                         <el-dropdown-item command="delgrp">删除组合</el-dropdown-item>
@@ -417,6 +418,9 @@ export default {
             }
         },
         handleGrpCmd: function(cmdid){
+            if(cmdid==='info'){this.handleViewGrop();return;}
+            if(cmdid==='config'){if(this.isAdmin)this.$refs.group.openConfig();return;}
+            if(cmdid==='schedule'){if(this.isAdmin)this.handleClickSchedule();return;}
             let self = this;
             if(cmdid == "renamegrp"){this.renameGroup();return;}
             if(cmdid == "addgrp"){

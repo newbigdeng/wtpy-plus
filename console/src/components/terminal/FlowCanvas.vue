@@ -1,23 +1,26 @@
 <template>
- <div>
-  <div class="terminal-actions" style="margin-bottom:12px"><el-input v-model="flow.name" placeholder="流程名称" aria-label="流程名称" style="width:180px"/><el-button :disabled="!canEdit" @click="save">保存流程</el-button><el-button type="primary" :disabled="!canEdit||!flow.id||dirty" :loading="running" @click="run">运行已保存流程</el-button><el-button @click="reset">新建</el-button></div>
+ <div class="flow-editor">
+  <div class="terminal-actions" style="margin-bottom:12px"><el-input v-model="flow.name" placeholder="流程名称" aria-label="流程名称" style="width:180px"/><el-button :disabled="!canEdit" @click="save">保存流程</el-button><el-button type="primary" :disabled="!canEdit||!flow.id||dirty" :loading="running" @click="run">运行已保存流程</el-button><el-button @click="reset">新建</el-button><el-button :disabled="!flow.id||!dirty" @click="openFlow(flow.id)">恢复已保存</el-button><span class="flow-save-state" role="status">{{dirty?'未保存':'已保存'}} · {{flow.nodes.length}} 个节点</span></div>
   <div class="terminal-actions"><el-select :model-value="flow.id||''" placeholder="打开已保存流程" style="width:210px" aria-label="打开流程" @update:model-value="openFlow"><el-option v-for="f in savedFlows" :key="f.id" :value="f.id" :label="f.name"/></el-select><el-select model-value="" placeholder="添加节点" style="width:140px" :disabled="!canEdit||flow.nodes.length>=8" aria-label="添加节点" @update:model-value="addNode"><el-option v-for="(name,type) in names" :key="type" :value="type" :label="name"/></el-select><el-button :disabled="!canEdit||!current" @click="removeNode">删除选中节点</el-button></div>
-  <p class="note">拖动节点排版，选中节点编辑参数和上游。此流程分析外部价格收益，不改变因子准入或 WT 策略。</p>
+  <p class="note">拖动节点排版，选中节点在右侧编辑。方向键移动节点。此流程分析外部价格收益，不改变因子准入或 WT 策略。</p>
+  <div class="flow-workspace">
   <div class="terminal-flow-canvas" @pointermove="move" @pointerup="drag=null" @pointercancel="drag=null">
    <svg ref="svg" viewBox="0 0 1000 310" aria-label="分析流程画布">
     <path v-for="(edge,i) in flow.edges" :key="i" :d="edgePath(edge)"/>
-    <g v-for="node in flow.nodes" :key="node.id" :transform="`translate(${node.x},${node.y})`" :class="{selected:selected===node.id}" tabindex="0" role="button" :aria-label="names[node.type]+'节点'" @click="selected=node.id" @keydown.enter="selected=node.id" @pointerdown="begin($event,node)">
-     <rect width="174" height="73" rx="3"/><circle cx="0" cy="36" r="3"/><circle cx="174" cy="36" r="3"/><text x="15" y="25">{{names[node.type]}}</text><text x="15" y="50" class="node-type">{{node.type==='data'?node.params.dataset:node.type==='risk'?'VaR · CVaR · Sharpe':node.type==='returns'?'相邻价格 → 简单收益':'保留来源与结果'}}</text>
+    <g v-for="node in flow.nodes" :key="node.id" :transform="`translate(${node.x},${node.y})`" :class="{selected:selected===node.id}" tabindex="0" role="button" :aria-label="names[node.type]+'节点'" @click="selected=node.id" @keydown="moveByKey($event,node)" @pointerdown="begin($event,node)">
+     <rect width="174" height="73" rx="0"/><circle cx="0" cy="36" r="3"/><circle cx="174" cy="36" r="3"/><text x="15" y="25">{{names[node.type]}}</text><text x="15" y="50" class="node-type">{{node.type==='data'?node.params.dataset:node.type==='risk'?'VaR · CVaR · Sharpe':node.type==='returns'?'相邻价格 → 简单收益':'保留来源与结果'}}</text>
     </g>
    </svg>
   </div>
-  <div v-if="current" class="terminal-panel-body" style="border-top:1px solid var(--wt-line)">
+  <aside class="flow-properties" aria-label="节点属性"><header><strong>节点属性</strong><small>{{current?.id||'未选择'}}</small></header><div v-if="current" class="terminal-panel-body">
    <div class="terminal-actions"><strong>{{names[current.type]}}</strong><small class="note">可用连线由数据类型决定</small></div>
    <el-form label-position="top" style="margin-top:14px;max-width:400px">
     <el-form-item v-if="current.type==='data'" label="日频参考价格"><el-select v-model="current.params.dataset" :disabled="!canEdit" aria-label="流程数据集"><el-option v-for="d in datasets.filter(d=>d.frequency==='日度')" :key="d.id" :value="d.id" :label="d.name"/></el-select></el-form-item>
     <template v-if="current.type==='risk'"><el-form-item label="分析本金"><el-input-number v-model="current.params.capital" :min="1" :disabled="!canEdit"/></el-form-item><el-form-item label="每年观测次数"><el-input-number v-model="current.params.periods" :min="1" :max="366" :disabled="!canEdit"/></el-form-item></template>
     <el-form-item v-if="current.type!=='data'" label="上游节点"><el-select :model-value="parent(current.id)" :disabled="!canEdit" @update:model-value="link(current.id,$event)"><el-option v-for="n in possibleParents" :key="n.id" :value="n.id" :label="names[n.type]+' · '+n.id"/></el-select></el-form-item>
    </el-form>
+  </div>
+  </aside>
   </div>
   <div v-if="runs.length" class="terminal-panel-body"><strong>运行记录</strong><el-table :data="runs.slice(0,8)" @row-click="showRun"><el-table-column prop="status" label="状态" width="120"/><el-table-column label="运行时间"><template #default="{row}">{{new Date(row.started_at*1000).toLocaleString()}}</template></el-table-column><el-table-column prop="error" label="停止原因"/></el-table></div>
   <div v-if="result" class="terminal-panel-body"><el-alert v-if="result.error" :title="result.error" type="warning" :closable="false"/><p class="note">{{lastOutput?.note}}</p><div v-if="lastOutput?.metrics" class="metric-grid"><div v-for="(v,k) in lastOutput.metrics" :key="k" class="metric"><span>{{k}}</span><strong>{{formatMetric(k,v)}}</strong></div></div><TerminalChart v-if="lastOutput?.series" :series="lastOutput.series"/></div>
@@ -42,13 +45,19 @@ function edgePath(e){const a=flow.value.nodes.find(n=>n.id===e.source),b=flow.va
 function point(event){const p=svg.value.createSVGPoint();p.x=event.clientX;p.y=event.clientY;return p.matrixTransform(svg.value.getScreenCTM().inverse())}
 function begin(event,node){selected.value=node.id;if(!props.canEdit)return;const p=point(event);drag.value={id:node.id,dx:p.x-node.x,dy:p.y-node.y};event.currentTarget.setPointerCapture(event.pointerId)}
 function move(event){if(!drag.value)return;const n=flow.value.nodes.find(n=>n.id===drag.value.id),p=point(event);n.x=Math.max(5,Math.min(820,p.x-drag.value.dx));n.y=Math.max(5,Math.min(232,p.y-drag.value.dy))}
+function moveByKey(event,node){
+ selected.value=node.id
+ const delta={ArrowLeft:[-10,0],ArrowRight:[10,0],ArrowUp:[0,-10],ArrowDown:[0,10]}[event.key]
+ if(!delta||!props.canEdit)return
+ event.preventDefault();node.x=Math.max(5,Math.min(820,node.x+delta[0]));node.y=Math.max(5,Math.min(232,node.y+delta[1]))
+}
 function reset(){flow.value=fresh();selected.value='data1';result.value=null;saved.value=''}
 function openFlow(id){const item=savedFlows.value.find(f=>f.id===id);if(!item)return;flow.value=JSON.parse(JSON.stringify(item));selected.value=flow.value.nodes[0]?.id;saved.value=JSON.stringify(flow.value);dirty.value=false;result.value=null}
 function addNode(type){let i=1;while(flow.value.nodes.some(n=>n.id===type+i))i++;const id=type+i;flow.value.nodes.push({id,type,x:60+40*(flow.value.nodes.length%6),y:40+25*(flow.value.nodes.length%6),params:type==='data'?{dataset:'sp500'}:type==='risk'?{capital:10000,periods:252,confidence:.95,risk_free:.02}:{}});selected.value=id}
 function removeNode(){const id=selected.value;flow.value.nodes=flow.value.nodes.filter(n=>n.id!==id);flow.value.edges=flow.value.edges.filter(e=>e.source!==id&&e.target!==id);selected.value=flow.value.nodes[0]?.id}
 function showRun(row){result.value=row}
 async function load(){const data=await props.request('workflow_list');runs.value=data.runs||[];savedFlows.value=data.workflows||[];if(savedFlows.value.length)openFlow(savedFlows.value[0].id)}
-async function save(){try{const data=await props.request('workflow_save',flow.value);flow.value=data.workflow;saved.value=JSON.stringify(flow.value);dirty.value=false;savedFlows.value=[data.workflow,...savedFlows.value.filter(f=>f.id!==data.workflow.id)];ElMessage.success('流程已保存')}catch(e){ElMessage.error(e.message)}}
+async function save(){try{const data=await props.request('workflow_save',flow.value);flow.value=structuredClone(data.workflow);saved.value=JSON.stringify(flow.value);dirty.value=false;savedFlows.value=[data.workflow,...savedFlows.value.filter(f=>f.id!==data.workflow.id)];ElMessage.success('流程已保存')}catch(e){ElMessage.error(e.message)}}
 async function run(){running.value=true;try{const data=await props.request('workflow_run',{id:flow.value.id});result.value=data.run;runs.value.unshift(data.run)}catch(e){ElMessage.error(e.message)}finally{running.value=false}}
 onMounted(()=>load().catch(e=>ElMessage.error(e.message)))
 </script>

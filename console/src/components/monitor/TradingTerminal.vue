@@ -1,6 +1,7 @@
 <template>
- <section class="terminal" v-loading="loading && !snapshot">
-  <div class="terminal-cockpit" aria-label="今日概览"><div v-for="card in cockpit" :key="card.label" :title="card.detail||card.source"><small>{{card.label}}</small><strong :class="card.color">{{card.value}}</strong><span :class="{'cockpit-source-wrap':card.wrapSource}">{{card.source}}</span><el-button v-if="card.label==='账户权益'" size="small" text class="equity-shortcut" @click="$refs.accountCurve.open()">查看曲线</el-button></div></div>
+ <section class="terminal" :class="{'chart-focused':chartFocused}" v-loading="loading && !snapshot">
+  <div v-show="!chartFocused" class="terminal-cockpit" aria-label="今日概览"><div v-for="card in cockpit" :key="card.label" :title="card.detail||card.source"><small>{{card.label}}</small><strong :class="card.color">{{card.value}}</strong><span :class="{'cockpit-source-wrap':card.wrapSource}">{{card.source}}</span><el-button v-if="card.label==='账户权益'" size="small" text class="equity-shortcut" @click="$refs.accountCurve.open()">查看曲线</el-button></div></div>
+  <div v-if="chartFocused" class="terminal-focus-summary"><span v-for="card in cockpit.filter(c=>['账户权益','今日盈亏','待处理告警'].includes(c.label))" :key="card.label" :title="card.source">{{card.label}} <b :class="card.color">{{card.value}}</b></span><small>{{cockpit[0].source}}</small></div>
   <div ref="toolbar" class="terminal-toolbar">
    <el-select v-model="code" filterable placeholder="选择合约" class="contract-select" aria-label="看盘合约" @change="reload(true)"><el-option v-for="item in catalog" :key="item.code" :value="item.code" :label="item.name+' · '+item.code"><span>{{item.name}}</span><small>{{item.code}}{{item.available?' · 有行情':''}}</small></el-option></el-select>
    <el-button size="small" aria-label="订阅合约" @click="$emit('subscriptions')">订阅合约</el-button>
@@ -22,6 +23,7 @@
    </div>
    <el-date-picker v-model="dateRange" type="daterange" value-format="YYYYMMDD" range-separator="至" start-placeholder="行情开始日期" end-placeholder="行情结束日期" aria-label="历史行情日期" class="history-range" @change="reload(true)"/>
    <el-checkbox v-model="autoRefresh" class="terminal-auto" @change="saveRefresh">自动刷新</el-checkbox>
+   <el-button :aria-pressed="chartFocused" @click="chartFocused=!chartFocused">{{chartFocused?'完整工作台':'专注图表'}}</el-button>
    <el-button @click="reload(true)" :loading="loading" aria-label="刷新行情">刷新</el-button>
   </div>
   <div v-if="error" class="terminal-error" role="alert">{{error}}；当前保留上次成功读取的快照。</div>
@@ -42,8 +44,8 @@
   <div class="market-chart-panel" :style="{height:chartHeight+'px',flexBasis:chartHeight+'px'}"><div ref="market" class="market-chart" :style="{height:chartHeight+'px'}"/><div v-if="!bars.length" class="terminal-chart-empty">{{error || snapshot?.market?.market_message || '等待行情数据'}}</div></div>
   <small class="indicator-note">指标基于当前加载的 {{bars.length}} 根 K 线；预热不足留空，最后一根随行情变化。EMA 用首段均值初始化。</small>
   <small class="trade-marker-note">▲ 开多　▼ 开空　● 平仓 · 标记来自通道真实成交。分钟 K 线标注结束时间，悬停标记查看成交时间与价格。{{period==='d'?'夜盘仅在交易日明确时标注。':''}}</small>
-  <ResizableDivider v-if="!compact" v-model="bottomHeight" axis="y" :reverse="true" :min="260" :max="bottomMax" storage-key="wt.terminal.bottom" label="调整看盘下方面板高度"/>
-  <div ref="bottom" class="terminal-bottom" :style="{flex:'0 0 '+bottomHeight+'px'}">
+  <ResizableDivider v-if="!compact && !chartFocused" v-model="bottomHeight" axis="y" :reverse="true" :min="260" :max="bottomMax" storage-key="wt.terminal.bottom" label="调整看盘下方面板高度"/>
+  <div v-show="!chartFocused" ref="bottom" class="terminal-bottom" :style="{flex:'0 0 '+bottomHeight+'px'}">
    <section class="terminal-equity" :class="{'has-capital-reset':snapshot?.accounts?.some(account=>account.capital_events?.length)}" :style="{flex:'0 0 '+equityWidth+'px'}">
     <AccountEquityChart ref="accountCurve" :key="groupid" :accounts="snapshot?.accounts || []" :portfolio="snapshot?.equity || []" :clock="clock"/>
    </section>
@@ -97,10 +99,11 @@ import {useSessionStore} from '@/store.js'
 export default{
  name:'TradingTerminal',components:{ResizableDivider,TradeRiskPanel,AccountEquityChart,StrategyResetPanel,ExecutionQualityPanel},props:{groupid:{type:String,required:true}},
  emits:['overview','subscriptions'],
- data:()=>({rolloverExpanded:localStorage.getItem('wt.terminal.rollover.expanded')==='1',snapshot:null,riskSnapshot:null,quoteSnapshot:null,quoteLoading:false,quoteSerial:0,clock:Date.now(),nextRefresh:Date.now()+5000,catalog:[],code:'',period:'m1',showMA:true,averages:[5,13,50],showMacd:true,showKdj:true,macdParameters:{fast:12,slow:26,signal:9},kdjParameters:{period:9,k:3,d:3},boll:false,indicatorEditor:false,indicatorDraft:{},indicatorError:'',loading:false,error:'',serial:0,riskSerial:0,autoRefresh:true,dateRange:null,compact:window.innerWidth<=700,bottomMax:440,equityMax:650,bottomHeight:300,equityWidth:360,ledgerTab:'positions',marketChart:null}),
+ data:()=>({chartFocused:localStorage.getItem('wt.terminal.chartFocused')==='true',rolloverExpanded:localStorage.getItem('wt.terminal.rollover.expanded')==='1',snapshot:null,riskSnapshot:null,quoteSnapshot:null,quoteLoading:false,quoteSerial:0,clock:Date.now(),nextRefresh:Date.now()+5000,catalog:[],code:'',period:'m1',showMA:true,averages:[5,13,50],showMacd:true,showKdj:true,macdParameters:{fast:12,slow:26,signal:9},kdjParameters:{period:9,k:3,d:3},boll:false,indicatorEditor:false,indicatorDraft:{},indicatorError:'',loading:false,error:'',serial:0,riskSerial:0,autoRefresh:true,dateRange:null,compact:window.innerWidth<=700,bottomMax:440,equityMax:650,bottomHeight:300,equityWidth:360,ledgerTab:'positions',marketChart:null}),
  computed:{
   isAdmin(){return ['admin','superman'].includes(useSessionStore().cache.userinfo?.role)},
-  chartHeight(){return (this.compact?330:380)+(this.compact?110:134)*(Number(this.showMacd)+Number(this.showKdj))},
+  chartExtra(){return this.chartFocused&&!this.compact?160:0},
+  chartHeight(){return this.chartExtra+(this.compact?330:380)+(this.compact?110:134)*(Number(this.showMacd)+Number(this.showKdj))},
   displayMarket(){const market=this.snapshot?.market,fast=this.quoteSnapshot;if(!market || fast?.groupid!==this.groupid || fast.market?.code!==market.code || this.dateRange?.length)return market;return mergeMarketQuote(market,fast.market)},
   freshness(){return marketFreshness(this.displayMarket,this.clock)},
   cockpit(){
@@ -138,7 +141,7 @@ export default{
   loadRefresh(){this.autoRefresh=localStorage.getItem('wt.terminal.autoRefresh.'+this.groupid)!=='false'},
   saveRollover(event){this.rolloverExpanded=event.currentTarget.open;localStorage.setItem('wt.terminal.rollover.expanded',this.rolloverExpanded?'1':'0')},
   saveRefresh(){localStorage.setItem('wt.terminal.autoRefresh.'+this.groupid,String(this.autoRefresh))},
-  fitPanels(){const compact=this.$el.clientWidth<=600;if(compact!==this.compact){this.compact=compact;this.$nextTick(this.paintMarket)}this.bottomMax=520;if(!compact){this.equityMax=Math.max(180,Math.min(650,(this.$refs.bottom?.clientWidth||0)-325));if(this.equityWidth>this.equityMax)this.equityWidth=this.equityMax}this.resize()},
+  fitPanels(){const compact=this.$el.clientWidth<=600;if(compact!==this.compact){this.compact=compact;this.$nextTick(this.paintMarket)}this.bottomMax=520;if(!compact&&!this.chartFocused){this.equityMax=Math.max(180,Math.min(650,(this.$refs.bottom?.clientWidth||0)-325));if(this.equityWidth>this.equityMax)this.equityWidth=this.equityMax}this.resize()},
   async loadRisk(){const serial=++this.riskSerial,groupid=this.groupid;try{const result=await (await fetch('/mgr/qryrisk_state',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({groupid})})).json();if(serial!==this.riskSerial||groupid!==this.groupid)return;if(result.result===0){this.riskSnapshot=result.snapshot||result;const risk=this.riskSnapshot,fund=risk.broker_summary,lots=risk.metrics?.gross_lots;this.$emit('overview',{groupid,text:(fund?.valid?'权益 '+this.number(fund.equity,0):'柜台快照不可用')+(lots?.valid?' · '+this.number(lots.value,0)+' 手':'')});}}catch{}},
   number(value,digits=2){return value==null || !Number.isFinite(Number(value))?'—':Number(value).toLocaleString('zh-CN',{maximumFractionDigits:digits,minimumFractionDigits:digits})},
   async reload(force=false){if(force)this.loadRisk();if(this.loading && !force)return;const serial=++this.serial;this.loading=true;this.error='';try{
@@ -173,7 +176,7 @@ export default{
    }
    const bars=this.bars,closes=bars.map(bar=>bar.close),up=this.css('--wt-up'),down=this.css('--wt-down'),text=this.css('--wt-muted'),grid=this.css('--wt-chart-grid');
    const labels=bars.map(bar=>String(bar.time)),colours=['#bd8a35','#8d7bc7','#4b92be','#aa735b','#5d9b85','#ab659b'];
-   const panels=[{name:'K线'+(this.showMA?' · MA('+this.averages.join(',')+')':''),top:24,height:this.compact?166:226},{name:'成交量',top:this.compact?220:280,height:this.compact?48:64}];
+   const panels=[{name:'K线'+(this.showMA?' · MA('+this.averages.join(',')+')':''),top:24,height:(this.compact?166:226)+this.chartExtra},{name:'成交量',top:(this.compact?220:280)+this.chartExtra,height:this.compact?48:64}];
    const series=[
     {name:'K线',type:'candlestick',data:bars.map(bar=>[bar.open,bar.close,bar.low,bar.high]),itemStyle:{color:up,color0:down,borderColor:up,borderColor0:down}},
     {name:'成交量',type:'bar',xAxisIndex:1,yAxisIndex:1,data:bars.map(bar=>({value:bar.volume,itemStyle:{color:bar.close>=bar.open?up:down}}))}
@@ -192,12 +195,12 @@ export default{
    }
    if(this.showMacd){
     const {fast,slow,signal}=this.macdParameters,values=calculateMacd(closes,fast,slow,signal),axis=panels.length;
-    panels.push({name:'MACD('+[fast,slow,signal].join(',')+') · DIF / DEA / 柱',top:(this.compact?302:378)+(this.compact?110:134)*(axis-2),height:this.compact?80:100});
+    panels.push({name:'MACD('+[fast,slow,signal].join(',')+') · DIF / DEA / 柱',top:this.chartExtra+(this.compact?302:378)+(this.compact?110:134)*(axis-2),height:this.compact?80:100});
     series.push(line('DIF',values.dif,colours[0],axis),line('DEA',values.dea,colours[1],axis),{name:'MACD柱',type:'bar',xAxisIndex:axis,yAxisIndex:axis,data:values.histogram.map(value=>value===null?null:({value,itemStyle:{color:value>=0?up:down}}))})
    }
    if(this.showKdj){
     const {period,k,d}=this.kdjParameters,values=calculateKdj(bars,period,k,d),axis=panels.length;
-    panels.push({name:'KDJ('+[period,k,d].join(',')+') · K / D / J',top:(this.compact?302:378)+(this.compact?110:134)*(axis-2),height:this.compact?80:100});
+    panels.push({name:'KDJ('+[period,k,d].join(',')+') · K / D / J',top:this.chartExtra+(this.compact?302:378)+(this.compact?110:134)*(axis-2),height:this.compact?80:100});
     series.push(line('K',values.k,colours[0],axis),line('D',values.d,colours[1],axis),line('J',values.j,colours[2],axis))
    }
    const markers=tradeMarkers(this.snapshot.trades||[],bars,this.code,this.period,{up,down,background:this.css('--wt-surface')});
@@ -228,7 +231,7 @@ export default{
   },
   resize(){this.marketChart?.resize()}
  },
- watch:{indicatorEditor(value){if(value)this.editIndicators()},bottomHeight(){this.$nextTick(this.resize)},equityWidth(){this.$nextTick(this.resize)},groupid(){++this.serial;++this.riskSerial;++this.quoteSerial;this.quoteLoading=false;this.quoteSnapshot=null;this.loading=false;this.catalog=[];this.code='';this.snapshot=null;this.riskSnapshot=null;this.dateRange=null;this.loadRefresh();this.reload();this.loadMarket();this.loadRisk()}},
+ watch:{chartFocused(value){localStorage.setItem('wt.terminal.chartFocused',String(value));this.$nextTick(()=>{this.paintMarket();this.resize()})},indicatorEditor(value){if(value)this.editIndicators()},bottomHeight(){this.$nextTick(this.resize)},equityWidth(){this.$nextTick(this.resize)},groupid(){++this.serial;++this.riskSerial;++this.quoteSerial;this.quoteLoading=false;this.quoteSnapshot=null;this.loading=false;this.catalog=[];this.code='';this.snapshot=null;this.riskSnapshot=null;this.dateRange=null;this.loadRefresh();this.reload();this.loadMarket();this.loadRisk()}},
  mounted(){this.loadRefresh();this.loadIndicators();this.reload();this.loadMarket();this.loadRisk();this.quotePoll=setInterval(()=>{this.clock=Date.now();if(this.autoRefresh && !document.hidden)this.loadQuote()},1000);this.poll=setInterval(()=>{this.clock=Date.now();if(this.autoRefresh && !document.hidden){this.reload();this.loadRisk()}this.nextRefresh=Date.now()+5000},5000);this.observer=new ResizeObserver(()=>{cancelAnimationFrame(this.resizeFrame);this.resizeFrame=requestAnimationFrame(()=>this.fitPanels())});this.observer.observe(this.$el);this.onTheme=()=>this.paintMarket();window.addEventListener('wt-theme-change',this.onTheme)},
  beforeUnmount(){++this.serial;++this.riskSerial;++this.quoteSerial;clearInterval(this.quotePoll);clearInterval(this.poll);cancelAnimationFrame(this.resizeFrame);this.observer?.disconnect();window.removeEventListener('wt-theme-change',this.onTheme);this.$refs.market?.removeEventListener('mousemove',this.tooltipPointer,true);this.marketChart?.dispose()}
 }
