@@ -1,4 +1,4 @@
-from .Roles import can_operate
+from .Roles import can_admin, can_operate
 """Authenticated independent controls for Python decisions and native CTA filters."""
 import asyncio
 try:
@@ -16,6 +16,7 @@ from fastapi import Body, Request
 from wtpy.StrategyRuntime import atomic_json, SEMANTICS
 from .StrategyFilters import filter_snapshot, row_filter_state, set_strategy_filter
 from .StrategyContracts import contract_codes
+from .StrategyReset import enqueue_reset, reset_eligibility, reset_task
 
 def _read(path, fallback):
     try:
@@ -26,6 +27,10 @@ def _read(path, fallback):
 
 def _directory(group):
     return Path(group["path"]).resolve() / "generated" / "strategy-control"
+
+def _refresh_reset_signals(data_mgr, groupid, strategyid, task):
+    if task and (task.get("native_completed") or task.get("status") == "completed"):
+        data_mgr.invalidate_strategy_signals(groupid, strategyid, task["id"])
 
 def _snapshot(group, running):
     root = _directory(group)
@@ -148,6 +153,8 @@ def runtime_rows(data_mgr, dog, groupid):
     for row in rows.values():
         if isinstance(names.get(row["id"]), str):
             row["name"] = names[row["id"]]
+        row.update(reset_eligibility(group, row["id"], active, status, alive))
+        _refresh_reset_signals(data_mgr, groupid, row["id"], row.get("reset_task"))
     return {"result": 0, "message": "OK", "strategies": list(rows.values()),
             "process_running": bool(running), "control_online": alive,
             "semantics": SEMANTICS}
@@ -175,6 +182,9 @@ def register_strategy_routes(app, data_mgr, dog, check_auth):
             return error
         result = runtime_rows(data_mgr, dog, groupid)
         result["can_control"] = can_operate(info)
+        if not can_admin(info):
+            for row in result["strategies"]:
+                row.update(reset_supported=False, reset_reason="仅管理员可强制平仓并重置策略", reset_task=None)
         return result
 
     @app.post("/mgr/ctrlstra", tags=["策略运行管理"])
@@ -195,6 +205,9 @@ def register_strategy_routes(app, data_mgr, dog, check_auth):
             return {"result": -2, "message": "策略不存在"}
         if not item["control_supported"]:
             return {"result": -3, "message": item["control_reason"]}
+        task = item.get("reset_task")
+        if action == "resume" and task and task.get("status") != "completed":
+            return {"result": -3, "message": "重置尚未成功，策略保持暂停，请先核对柜台状态"}
         root = _directory(data_mgr.get_group(groupid))
         command_id = uuid.uuid4().hex
         with (root / ".command.lock").open("a") as lock:
@@ -216,6 +229,60 @@ def register_strategy_routes(app, data_mgr, dog, check_auth):
         return {"result": 0, "message": "命令已提交，等待当前回调退出后确认",
                 "pending": True, "command_id": command_id, "semantics": SEMANTICS}
 
+    @app.post("/mgr/reset_strategy", tags=["策略运行管理"])
+    def reset_strategy(request: Request, groupid: str = Body(..., embed=True),
+                       strategyid: str = Body(..., embed=True),
+                       confirmed: bool = Body(False, embed=True),
+                       token: str = Body(None, embed=True)):
+        info, error = authorize(request, token, groupid, True)
+        if error:
+            return error
+        if not can_admin(info):
+            return {"result": -403, "message": "仅管理员可强制平仓并重置策略"}
+        if not confirmed:
+            return {"result": -2, "message": "请明确确认先平仓再清空策略状态"}
+        if fcntl is None:
+            return {"result": -3, "message": "策略重置目前仅支持Linux容器"}
+        group = data_mgr.get_group(groupid)
+        root = _directory(group)
+        try:
+            with (root/".command.lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                rows = runtime_rows(data_mgr, dog, groupid)
+                row = next((item for item in rows["strategies"] if item["id"] == strategyid), None)
+                if row is None:
+                    return {"result": -2, "message": "策略不存在"}
+                if not row["reset_supported"]:
+                    return {"result": -3, "message": row["reset_reason"], "task": row.get("reset_task")}
+                state = Path(group["path"])/"managed-strategies"
+                applied = _read(state/"applied.json", {})
+                plan = _read(state/"revisions"/applied["revision"]/"plan.json", {})
+                status, _, online = _snapshot(group, dog.isRunning(groupid))
+                allowed = reset_eligibility(group, strategyid, plan, status, online)
+                if not allowed["reset_supported"]:
+                    return {"result": -3, "message": allowed["reset_reason"]}
+                task = enqueue_reset(group, strategyid, plan, status, info.get("loginid", ""))
+            data_mgr.log_action(info, "strategy_reset_requested", groupid+"/"+strategyid)
+            return {"result": 0, "message": "重置已提交；完成后保持暂停", "task": task}
+        except (OSError, ValueError, KeyError) as exc:
+            return {"result": -3, "message": "未完成重置提交："+str(exc)}
+
+    @app.post("/mgr/reset_strategy_status", tags=["策略运行管理"])
+    def query_reset(request: Request, groupid: str = Body(..., embed=True),
+                    strategyid: str = Body(..., embed=True),
+                    token: str = Body(None, embed=True)):
+        info, error = authorize(request, token, groupid)
+        if error:
+            return error
+        if not can_admin(info):
+            return {"result": -403, "message": "仅管理员可查看强制重置任务"}
+        try:
+            task = reset_task(data_mgr.get_group(groupid), strategyid)
+            _refresh_reset_signals(data_mgr, groupid, strategyid, task)
+            return {"result": 0, "task": task}
+        except (OSError, ValueError) as exc:
+            return {"result": -3, "message": "重置任务读取失败："+str(exc)}
+
     @app.post("/mgr/ctrlstra_filter", tags=["策略运行管理"])
     def control_filter(request: Request, groupid: str = Body(..., embed=True),
                        strategyid: str = Body(..., embed=True),
@@ -232,6 +299,9 @@ def register_strategy_routes(app, data_mgr, dog, check_auth):
             return {"result": -2, "message": "策略不存在"}
         if not item["filter_supported"]:
             return {"result": -3, "message": item["filter_reason"]}
+        task = item.get("reset_task")
+        if task and task.get("status") not in ("completed", "failed"):
+            return {"result": -3, "message": "策略正在重置，暂不能更改目标过滤"}
         try:
             changed = set_strategy_filter(data_mgr.get_group(groupid), strategyid, action == "filter")
         except (OSError, ValueError) as exc:

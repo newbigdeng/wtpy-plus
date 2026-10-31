@@ -84,7 +84,7 @@ def trade_risk_snapshot(group, channels, code="", now=None, running=None):
         for currency, fund in values:
             if not isinstance(fund,dict):
                 continue
-            item={key:number(fund.get(key)) for key in ("prebalance","balance","available","margin","frozen_margin","frozen_commission","closeprofit","dynprofit")}
+            item={key:number(fund.get(key)) for key in ("prebalance","balance","available","margin","frozen_margin","frozen_commission","closeprofit","dynprofit","deposit","withdraw")}
             item["fee"]=number(fund.get("commission",fund.get("fee")))
             equity=item["balance"]+item["dynprofit"] if item["balance"] is not None and item["dynprofit"] is not None else None
             timestamp=number(fund.get("updated_at"))

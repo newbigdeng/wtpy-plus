@@ -3,11 +3,19 @@
     <aside id="wt-research-strategies" class="wt-research-sidebar" :style="{flex:'0 0 '+sidebarWidth+'px'}" aria-label="回测策略列表">
       <div class="wt-research-heading"><span>策略研究</span><button class="wt-icon-button" aria-label="刷新策略列表" @click="refreshStras"><WtIcon name="refresh"/></button><button class="wt-icon-button" aria-label="新建策略" @click="onAddStrategy"><WtIcon name="plus"/></button></div>
       <el-input v-model="search" placeholder="搜索策略" clearable aria-label="搜索回测策略"><template #prefix><WtIcon name="search" style="width:14px"/></template></el-input>
-      <div class="wt-strategy-count">{{filteredStrategies.length}} 个策略 · CTA / HFT / SEL</div>
+      <div class="wt-strategy-count">策略库 · {{filteredLibrary.length}} 个版本</div>
+      <div class="wt-library-cards" aria-label="策略库研究入口">
+        <button v-for="item in filteredLibrary" :key="item.id" class="wt-library-card" @click="researchLibrary(item)">
+          <span>{{item.name}}</span><small>{{item.engine_type}} · v{{item.version}} · 创建研究副本</small>
+        </button>
+        <p v-if="!filteredLibrary.length" class="wt-research-empty">{{search?'没有匹配的库策略':'策略库为空，可前往策略管理导入。'}}</p>
+      </div>
+      <div class="wt-strategy-count">我的研究 · {{filteredStrategies.length}} 个副本</div>
       <div v-loading="strasOnWay">
         <div class="stra-item" v-for="item in filteredStrategies" :key="item.id" :class="{active:curStra?.id===item.id}" @click="selectStrategy(item)" role="button" tabindex="0" @keydown.enter="selectStrategy(item)">
           <div class="stra-line"><span class="wt-type-badge">{{(item.strategy_type||'cta').toUpperCase()}}</span><span class="stra-title" :title="item.name">{{item.name}}</span><button class="wt-icon-button" :aria-label="'查看策略 '+item.name" @click.stop="selectStrategy(item)"><i class="el-icon-view"/></button><button class="wt-icon-button" :aria-label="'删除策略 '+item.name" @click.stop="onDelStrategy(item.id)"><i class="el-icon-delete"/></button></div>
-          <div class="stra-line wt-stra-metrics"><span>年化 <b :class="profitClass(item.perform?.annual_return)">{{num(item.perform?.annual_return)}}%</b></span><span>回撤 <b>{{num(item.perform?.max_falldown)}}%</b></span></div>
+          <div class="stra-line wt-stra-metrics"><span>区间收益 <b :class="profitClass(item.latest_performance?.metrics?.total_return)">{{cardPercent(item.latest_performance,'total_return')}}</b></span><span>回撤 <b>{{cardPercent(item.latest_performance,'max_falldown')}}</b></span></div>
+          <div class="wt-card-result">{{cardCaption(item.latest_performance)}}</div>
         </div>
         <div v-if="!filteredStrategies.length&&!strasOnWay" class="wt-research-empty">{{search?'没有匹配的策略':'创建一个策略，从框架开始研究。'}}</div>
       </div>
@@ -30,11 +38,11 @@
         <p>{{backtestMode==='plus'?'历史 Tick → 实盘引擎 → 执行器／策略委托 → 模拟柜台。':'使用策略 Mocker 与成交模型，快速验证信号。'}} 两套回测共用策略代码，分别保存结果。</p>
       </div>
       <template v-if="curStra">
-        <div class="wt-research-tabs"><button :class="{active:selData==='editor'}" @click="selData='editor'">策略代码<span v-if="dirty" class="wt-dirty-dot"/></button><button :class="{active:selData==='backtest'}" :disabled="!curBT" @click="selData='backtest'">原生回测详情</button><button :class="{active:selData==='plus'}" @click="setBacktestMode('plus')">Plus 配置与任务</button><span class="wt-save-state">{{saving?'保存中…':dirty?'有未保存的修改':'代码已保存'}}</span></div>
-        <PlusResearch v-show="selData==='plus'" :active="selData==='plus'" :strategyid="curStra.id" :engine-type="strategyType" :before-save="onSaveCode" :guest="isGuest" v-model:capital="btConfig.capital"/>
+        <div class="wt-research-tabs"><button :class="{active:selData==='editor'}" @click="selData='editor'">策略代码<span v-if="dirty" class="wt-dirty-dot"/></button><button :class="{active:selData==='backtest'}" :disabled="!curBT" @click="selData='backtest'">原生回测详情</button><button :class="{active:selData==='plus'}" @click="setBacktestMode('plus')">Plus 配置与任务</button><span class="wt-save-state">{{codeLoading?'读取中…':saving?'保存中…':dirty?'有未保存的修改':codeParent?'副本已保存 · v'+codeParent:'尚未保存具名版本'}}</span></div>
+        <PlusResearch v-show="selData==='plus'" :active="selData==='plus'" :strategyid="curStra.id" :engine-type="strategyType" :before-save="onSaveCode" :guest="isGuest" v-model:capital="btConfig.capital" @completed="refreshStras"/>
         <div v-show="selData==='editor'" class="wt-editor-workspace">
           <section class="wt-editor-pane" :style="{flex:'0 0 '+editorHeight+'px'}">
-            <div class="wt-editor-toolbar"><span class="wt-code-file"><WtIcon name="document"/>MyStrategy.py</span><span class="wt-editor-hint">{{typeInfo?.base_class||'Base'+strategyType.toUpperCase()+'Strategy'}}</span><el-button :disabled="saving" @click="chooseLibrary">从策略库导入</el-button><el-button @click="onClickCancel" :disabled="!dirty">撤销修改</el-button><el-button :loading="saving" :disabled="!dirty&&!isGuest" @click="onSaveCode">保存代码</el-button><el-button class="wt-run-button" type="success" :disabled="saving" @click="configureBacktest"><WtIcon name="play"/>{{backtestMode==='plus'?'配置 Plus 回测':'一键回测'}}</el-button></div>
+            <div class="wt-editor-toolbar"><span class="wt-code-file"><WtIcon name="document"/>MyStrategy.py</span><span class="wt-editor-hint">{{typeInfo?.base_class||'Base'+strategyType.toUpperCase()+'Strategy'}}</span><el-button :disabled="saving" @click="chooseLibrary">从策略库导入</el-button><el-button @click="onClickCancel" :disabled="!dirty">撤销修改</el-button><el-select v-model="codeParent" :disabled="codeLoading||saving" aria-label="研究代码版本" style="width:210px" @change="loadCodeVersion"><el-option v-if="!codeParent" :value="0" label="未命名副本"/><el-option v-for="row in codeVersions" :key="row.version" :value="row.version" :label="'v'+row.version+' · '+row.version_name"/></el-select><el-button :loading="saving" :disabled="codeLoading||saving" @click="onSaveCode(true)">保存新版本</el-button><el-button :disabled="codeLoading||saving||publishing||isGuest" @click="openPublish">发布到策略库</el-button><el-button class="wt-run-button" type="success" :disabled="saving" @click="configureBacktest"><WtIcon name="play"/>{{backtestMode==='plus'?'配置 Plus 回测':'一键回测'}}</el-button></div>
             <div class="wt-editor-frame"><codemirror ref="mycode" v-model="content" :options="editorOptions"/></div>
           </section>
           <ResizableDivider v-model="editorHeight" axis="y" :min="180" :max="780" storage-key="wt.backtest.editorHeight" label="调整代码区高度"/>
@@ -60,8 +68,9 @@
       </template>
       <div v-else class="wt-research-welcome"><WtIcon name="backtest"/><h2>把想法写成策略</h2><p>先从策略库选择 CTA、HFT、SEL 策略。<br/>上传 Python 文件、维护原始代码请前往左侧“策略管理”。</p><el-button type="primary" @click="onAddStrategy">新建策略</el-button></div>
     </section>
+    <el-dialog v-model="showPublish" title="发布为新的独立策略" width="520px"><el-form label-position="top"><el-form-item label="已保存的研究版本"><el-select v-model="publishForm.version" aria-label="待发布的研究版本"><el-option v-for="row in codeVersions" :key="row.version" :value="row.version" :label="'v'+row.version+' · '+row.version_name"/></el-select></el-form-item><el-form-item label="新策略名称"><el-input v-model="publishForm.name" maxlength="80" aria-label="发布的新策略名称"/></el-form-item><el-form-item label="新策略 ID（可选）"><el-input v-model="publishForm.library_id" maxlength="40" placeholder="留空自动生成；填写时须使用未占用的 ID" aria-label="发布的新策略ID"/></el-form-item></el-form><p class="wt-research-note">只发布选定的已保存版本。原策略、副本和历史版本均保留；不会应用到交易组合。</p><template #footer><el-button @click="showPublish=false">取消</el-button><el-button type="primary" :loading="publishing" :disabled="!publishForm.version||!publishForm.name.trim()" @click="publishCode">发布新策略</el-button></template></el-dialog>
     <el-dialog title="从策略库创建研究" v-model="showCreate" width="520px">
-      <el-form label-position="top" @submit.prevent="createStrategy"><el-form-item label="策略库版本"><el-select v-model="createForm.library_id" filterable @change="selectCreateLibrary"><el-option v-for="item in library" :key="item.id" :value="item.id" :label="item.name+' · '+item.engine_type+' · v'+item.version"/></el-select></el-form-item><el-form-item label="策略名称"><el-input v-model="createForm.name" maxlength="80" placeholder="例如：均线趋势 CTA" @keyup.enter="createStrategy"/></el-form-item><el-form-item label="策略类型"><el-select disabled v-model="createForm.strategy_type" aria-label="策略类型" style="width:100%"><el-option v-for="item in strategyTypes" :key="item.id" :value="item.id" :label="item.label+' · '+item.base_class"/></el-select></el-form-item><p class="wt-create-description">{{createType?.description}}</p><div class="wt-callback-list"><code v-for="callback in createType?.callbacks||[]" :key="callback">{{callback}}</code></div><p class="wt-research-note">研究保存为所选策略库版本的独立副本；修改研究不会回写策略库。</p></el-form>
+      <el-form label-position="top" @submit.prevent="createStrategy"><el-form-item label="策略库版本"><el-select v-model="createForm.library_id" filterable @change="selectCreateLibrary"><el-option v-for="item in library" :key="item.id" :value="item.id" :label="item.name+' · '+item.engine_type+' · v'+item.version"/></el-select></el-form-item><el-form-item label="策略名称"><el-input v-model="createForm.name" maxlength="80" placeholder="例如：均线趋势 CTA" @keyup.enter="createStrategy"/></el-form-item><el-form-item label="策略类型"><el-select disabled v-model="createForm.strategy_type" aria-label="策略类型" style="width:100%"><el-option v-for="item in strategyTypes" :key="item.id" :value="item.id" :label="item.label+' · '+item.base_class"/></el-select></el-form-item><p class="wt-create-description">{{createType?.description}}</p><div class="wt-callback-list"><code v-for="callback in createType?.callbacks||[]" :key="callback">{{callback}}</code></div><p class="wt-research-note">研究保存为所选策略库版本的独立副本；修改研究不会回写策略库。创建副本不代表研究通过，也不会应用到交易组合。</p></el-form>
       <template #footer><el-button @click="showCreate=false">取消</el-button><el-button type="primary" :loading="creating" :disabled="!createForm.name.trim()||!createForm.library_id" @click="createStrategy">创建并编写</el-button></template>
     </el-dialog>
     <el-dialog v-model="showLibrary" title="从策略库导入当前研究" width="520px"><el-select v-model="librarySelected" filterable><el-option v-for="item in library.filter(row=>row.engine_type.toLowerCase()===strategyType)" :key="item.id" :value="item.id" :label="item.name+' · v'+item.version"/></el-select><p class="wt-research-note">导入的是固定版本代码副本；不会修改库中策略，也不会开始交易。</p><template #footer><el-button @click="showLibrary=false">取消</el-button><el-button type="primary" @click="importLibrary">放入编辑器</el-button></template></el-dialog>
@@ -80,15 +89,17 @@ import BTComp from './btcomp.vue'
 import PlusResearch from './PlusResearch.vue'
 import {useSessionStore} from '@/store.js'
 import RiskSelection from '@/components/common/RiskSelection.vue'
+import {cardPercent,cardCaption} from '@/js/backtest-card.js'
 export default {
   name:'Backtest',components:{codemirror,WtIcon,ResizableDivider,BTComp,PlusResearch,RiskSelection},
-  data(){return{library:[],showLibrary:false,librarySelected:'',datasets:[],risk:{rules:[]},showStrategyList:false,sidebarWidth:264,editorHeight:Math.max(200,Math.min(460,window.innerHeight*.43)),search:'',strategies:[],strategyTypes:[],strasOnWay:false,showCreate:false,creating:false,createForm:{name:'',strategy_type:'cta'},showBTCfg:false,launching:false,saving:false,curStra:null,curBT:null,backtests:[],content:'',content_bak:'',selData:'editor',backtestMode:'fast',showRunLog:false,detail:null,btConfig:{dataset:'',startTime:new Date(2026,9,12),endTime:new Date(2026,9,12),capital:500000,slippage:0,fill_model:'causal_touch',event_delay:0,participation_rate:0},cmOptions:{mode:'python',lineWrapping:false,indentUnit:4,extraKeys:{'Ctrl-S':()=>this.onSaveCode()}}}},
+  data(){return{codeVersions:[],codeHead:0,codeParent:0,codeCurrent:0,codeLoading:false,showPublish:false,publishing:false,publishForm:{version:0,name:'',library_id:''},library:[],showLibrary:false,librarySelected:'',datasets:[],risk:{rules:[]},showStrategyList:false,sidebarWidth:264,editorHeight:Math.max(200,Math.min(460,window.innerHeight*.43)),search:'',strategies:[],strategyTypes:[],strasOnWay:false,showCreate:false,creating:false,createForm:{name:'',strategy_type:'cta'},showBTCfg:false,launching:false,saving:false,curStra:null,curBT:null,backtests:[],content:'',content_bak:'',selData:'editor',backtestMode:'fast',showRunLog:false,detail:null,btConfig:{dataset:'',startTime:new Date(2026,9,12),endTime:new Date(2026,9,12),capital:500000,slippage:0,fill_model:'causal_touch',event_delay:0,participation_rate:0},cmOptions:{mode:'python',lineWrapping:false,indentUnit:4,extraKeys:{'Ctrl-S':()=>this.onSaveCode()}}}},
   computed:{
     fastDataset(){return this.datasets.find(row=>row.id===this.btConfig.dataset)},
     eligibleDatasets(){return this.datasets.filter(row=>row.rows>0&&(this.strategyType!=='hft'||row.period==='tick'))},
     isGuest(){return useSessionStore().cache.userinfo.role==='guest'},
-    editorOptions(){return {...this.cmOptions,readOnly:this.isGuest}},
+    editorOptions(){return {...this.cmOptions,readOnly:this.isGuest||this.codeLoading}},
     dirty(){return this.content!==this.content_bak},
+    filteredLibrary(){const term=this.search.trim().toLowerCase();return this.library.filter(row=>[row.id,row.name,row.engine_type].join(' ').toLowerCase().includes(term))},
     filteredStrategies(){const term=this.search.trim().toLowerCase();return this.strategies.filter(s=>(s.name+' '+(s.strategy_type||'cta')).toLowerCase().includes(term))},
     strategyType(){return this.curStra?.strategy_type||'cta'},
     typeInfo(){return this.strategyTypes.find(item=>item.id===this.strategyType)},
@@ -96,13 +107,14 @@ export default {
     detailLog(){const value=this.detail?.logs??this.detail?.log_tail??this.detail?.log??'';return Array.isArray(value)?value.join('\n'):typeof value==='string'?value:JSON.stringify(value,null,2)}
   },
   methods:{
+    cardPercent,cardCaption,
     allowEdit(){if(this.isGuest){this.$message.warning('游客模式不支持操作');return false}return true},
     async apiRequest(path,payload={}){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(payload)});const value=await response.json();if(!response.ok||value.result<0)throw new Error(value.message||'请求失败');return value},
     async loadLibrary(){const value=await this.apiRequest('/mgr/strategy_library');this.library=value.strategies||[]},
     async chooseLibrary(){if(!this.allowEdit())return;try{await this.loadLibrary();this.librarySelected='';this.showLibrary=true}catch(error){this.$message.error(error.message)}},
     selectCreateLibrary(){const row=this.library.find(item=>item.id===this.createForm.library_id);if(row){this.createForm.strategy_type=row.engine_type.toLowerCase();if(!this.createForm.name)this.createForm.name=row.name}},
-    async librarySource(id){const value=await this.apiRequest('/mgr/strategy_library_get',{library_id:id});const item=value.strategy;if(!item?.source)throw new Error('无法读取策略库代码');return '# 策略库快照: '+item.id+' v'+item.version+'; 在线研究修改不会回写策略库\n'+item.source},
-    async importLibrary(){if(!this.allowEdit()||!this.librarySelected||!this.curStra)return;try{this.content=await this.librarySource(this.librarySelected);this.showLibrary=false;this.$message.success('已放入代码编辑器，请检查并保存')}catch(error){this.$message.error(error.message)}},
+    async librarySource(id,version){const value=await this.apiRequest('/mgr/strategy_library_get',{library_id:id,version});const item=value.strategy;if(!item?.source)throw new Error('无法读取策略库代码');return '# 策略库快照: '+item.id+' v'+item.version+'; 在线研究修改不会回写策略库\n'+item.source},
+    async importLibrary(){if(!this.allowEdit()||!this.librarySelected||!this.curStra)return;try{this.content=await this.librarySource(this.librarySelected,this.library.find(row=>row.id===this.librarySelected)?.version);this.showLibrary=false;this.$message.success('已放入代码编辑器，请检查并保存')}catch(error){this.$message.error(error.message)}},
     selectFastDataset(){const row=this.fastDataset;if(!row)return;const parse=value=>{const s=String(value);return new Date(Number(s.slice(0,4)),Number(s.slice(4,6))-1,Number(s.slice(6,8)))};this.btConfig.startTime=parse(row.start);this.btConfig.endTime=parse(row.end);if(row.period!=='tick'){this.btConfig.fill_model='legacy_cta';this.btConfig.event_delay=0;this.btConfig.participation_rate=0}else if(this.btConfig.fill_model==='legacy_cta')this.btConfig.fill_model='causal_touch'},
     async loadDatasets(){try{const value=await this.apiRequest('/mgr/history/datasets');this.datasets=value.entries||[];if(!this.eligibleDatasets.some(row=>row.id===this.btConfig.dataset)){this.btConfig.dataset=this.eligibleDatasets[0]?.id||'';this.selectFastDataset()}}catch(error){this.$message.error(error.message)}},
     resetFillOptions(){if(this.btConfig.fill_model==='legacy_cta')this.btConfig.event_delay=0;this.btConfig.participation_rate=this.btConfig.fill_model==='volume_limited'?0.1:0},
@@ -112,9 +124,20 @@ export default {
     fmtTime(value){if(!value)return '—';const text=String(value);return text.slice(0,4)+'.'+text.slice(4,6)+'.'+text.slice(6,8)+(text.length>8?' '+text.slice(8,10)+':'+text.slice(10,12):'')},
     statusText(info){return{running:'运行中',completed:'已完成',failed:'失败',stopped:'已停止',interrupted:'已中断'}[info?.status]||'历史记录'},
     async selectStrategy(item){if(this.curStra?.id===item.id){this.showStrategyList=false;this.selData='editor';return}if(this.dirty){try{await this.$confirm('当前代码尚未保存，切换后将放弃这些修改。','切换策略',{confirmButtonText:'放弃并切换',cancelButtonText:'继续编写',type:'warning'})}catch{return}}this.showStrategyList=false;this.onOpenStrategy(item)},
-    onOpenStrategy(item){this.curStra=item;this.curBT=null;this.backtests=[];this.detail=null;this.selData=this.backtestMode==='plus'?'plus':'editor';this.content='';this.content_bak='';localStorage.setItem('wt.backtest.selected',item.id);const id=item.id;this.$api.getBtStraCode(id,result=>{if(this.curStra?.id!==id)return;if(result.result<0)this.$message.error('拉取策略代码失败：'+result.message);else{this.content=result.content||'';this.content_bak=this.content}});this.refreshBacktests()},
-    refreshStras(){this.strasOnWay=true;this.$api.getBtStrategies(result=>{this.strasOnWay=false;if(result.result<0){this.$message.error(result.message);return}this.strategies=result.strategies||[];if(this.curStra&&!this.strategies.some(s=>s.id===this.curStra.id)){this.curStra=null;this.content='';this.content_bak='';this.backtests=[];this.curBT=null}if(!this.curStra){const saved=localStorage.getItem('wt.backtest.selected');const selected=this.strategies.find(s=>s.id===saved);if(selected)this.onOpenStrategy(selected)}})},
-    refreshBacktests(){if(!this.curStra)return;const id=this.curStra.id;this.$api.getBacktests(id,result=>{if(this.curStra?.id!==id)return;if(result.result<0){this.$message.error(result.message);return}this.backtests=result.backtests||[];if(this.curBT){const found=this.backtests.find(bt=>bt.id===this.curBT.id);if(found)this.curBT=found}})},
+    async onOpenStrategy(item){
+      this.curStra=item;this.curBT=null;this.backtests=[];this.detail=null;this.selData=this.backtestMode==='plus'?'plus':'editor';this.content='';this.content_bak='';this.codeVersions=[];this.codeHead=0;this.codeParent=0;this.codeCurrent=0;this._loadedCodeVersion=0;this.codeLoading=true;localStorage.setItem('wt.backtest.selected',item.id);const id=item.id
+      try{if(this.isGuest){const value=await this.apiRequest('/bt/qrycode',{straid:id});if(this.curStra?.id===id)this.content=this.content_bak=value.content||''}else{const value=await this.apiRequest('/bt/research_code',{straid:id});if(this.curStra?.id===id){this.content=this.content_bak=value.content;this.codeVersions=value.versions;this.codeHead=value.head;this.codeParent=this._loadedCodeVersion=this.codeCurrent=value.current_version}}}
+      catch(error){this.$message.error(error.message)}finally{if(this.curStra?.id===id)this.codeLoading=false}this.refreshBacktests()
+    },
+    async loadCodeVersion(version){
+      if(!this.curStra||!version)return;const id=this.curStra.id
+      if(this.dirty){try{await this.$confirm('载入已保存版本将放弃编辑器中的未保存修改。','切换研究版本',{confirmButtonText:'载入版本',cancelButtonText:'继续编辑'})}catch{this.codeParent=this._loadedCodeVersion??this.codeHead;return}}
+      this.codeLoading=true
+      try{const value=await this.apiRequest('/bt/research_code_version',{straid:id,version});if(this.curStra?.id===id){this.content=value.version.content;this.codeParent=version;this._loadedCodeVersion=version}}
+      catch(error){this.$message.error(error.message)}finally{if(this.curStra?.id===id)this.codeLoading=false}
+    },
+    refreshStras(){this.loadLibrary().catch(error=>this.$message.error(error.message));this.strasOnWay=true;this.$api.getBtStrategies(result=>{this.strasOnWay=false;if(result.result<0){this.$message.error(result.message);return}this.strategies=result.strategies||[];if(this.curStra&&!this.strategies.some(s=>s.id===this.curStra.id)){this.curStra=null;this.content='';this.content_bak='';this.backtests=[];this.curBT=null}if(!this.curStra){const saved=localStorage.getItem('wt.backtest.selected');const selected=this.strategies.find(s=>s.id===saved);if(selected)this.onOpenStrategy(selected)}})},
+    refreshBacktests(){if(!this.curStra)return;const id=this.curStra.id;this.$api.getBacktests(id,result=>{if(this.curStra?.id!==id)return;if(result.result<0){this.$message.error(result.message);return}const previous=new Map(this.backtests.map(task=>[task.id,task.status]));this.backtests=result.backtests||[];if(this.backtests.some(task=>task.status==='completed'&&previous.get(task.id)==='running'))this.refreshStras();if(this.curBT){const found=this.backtests.find(bt=>bt.id===this.curBT.id);if(found)this.curBT=found}})},
     async renameStrategy(){
       if(!this.allowEdit())return
       const id=this.curStra?.id;if(!id)return
@@ -126,11 +149,34 @@ export default {
         this.$message.success('策略名称已修改')
       }catch(error){if(error instanceof Error)this.$message.error(error.message)}
     },
+    researchLibrary(row){if(!this.allowEdit())return;this.createForm={name:row.name,strategy_type:row.engine_type.toLowerCase(),library_id:row.id};this.showCreate=true},
     async onAddStrategy(){if(!this.allowEdit())return;try{await this.loadLibrary();this.createForm={name:'',strategy_type:this.strategyType,library_id:''};this.showCreate=true}catch(error){this.$message.error(error.message)}},
-    async createStrategy(){if(!this.allowEdit()||this.creating||!this.createForm.name.trim()||!this.createForm.library_id)return;this.creating=true;try{const source=await this.librarySource(this.createForm.library_id);const value=await this.apiRequest('/bt/addstra',{name:this.createForm.name.trim(),strategy_type:this.createForm.strategy_type});await this.apiRequest('/bt/setcode',{straid:value.strategy.id,content:source});this.strategies.push(value.strategy);this.showCreate=false;await this.selectStrategy(value.strategy)}catch(error){this.$message.error(error.message)}finally{this.creating=false}},
+    async createStrategy(){if(!this.allowEdit()||this.creating||!this.createForm.name.trim()||!this.createForm.library_id)return;this.creating=true;try{const source=await this.librarySource(this.createForm.library_id,this.library.find(row=>row.id===this.createForm.library_id)?.version);const value=await this.apiRequest('/bt/addstra',{name:this.createForm.name.trim(),strategy_type:this.createForm.strategy_type});await this.apiRequest('/bt/setcode',{straid:value.strategy.id,content:source});this.strategies.push(value.strategy);this.showCreate=false;await this.selectStrategy(value.strategy)}catch(error){this.$message.error(error.message)}finally{this.creating=false}},
     async onDelStrategy(id){if(!this.allowEdit())return;try{await this.$confirm('删除策略会同时删除其回测记录，是否继续？','删除策略',{confirmButtonText:'删除',cancelButtonText:'取消',type:'warning'})}catch{return}this.$api.delBtStrategy(id,result=>{if(result.result<0)this.$message.error(result.message);else{this.$message.success('策略已删除');this.refreshStras()}})},
-    onSaveCode(){if(!this.allowEdit())return Promise.resolve(false);if(!this.curStra||!this.dirty)return Promise.resolve(true);if(this.saving)return Promise.resolve(false);this.saving=true;const id=this.curStra.id,content=this.content;return new Promise(resolve=>this.$api.commitBtStraCode(id,content,result=>{this.saving=false;if(result.result<0){this.$message.error('保存失败：'+result.message);resolve(false)}else{if(this.curStra?.id===id)this.content_bak=content;this.$message.success('策略代码已保存');resolve(true)}}))},
-    async onClickCancel(){if(!this.dirty)return;try{await this.$confirm('放弃尚未保存的修改？','撤销修改',{confirmButtonText:'放弃修改',cancelButtonText:'继续编写'})}catch{return}this.content=this.content_bak},
+    async onSaveCode(force=false){
+      if(!this.allowEdit()||!this.curStra||this.saving||this.codeLoading)return false
+      if(!force&&!this.dirty&&this.codeParent)return true
+      const id=this.curStra.id,content=this.content,base=this.content_bak,head=this.codeHead,parent=this.codeParent
+      this.saving=true
+      try{const {value}=await this.$prompt('为当前研究副本填写版本名称。保存只影响该副本。','保存研究版本',{inputPlaceholder:'例如：突破确认优化',confirmButtonText:'保存版本',cancelButtonText:'取消',inputValidator:value=>Boolean(value?.trim())&&value.trim().length<=80||'请输入1至80字的版本名称'})
+        const result=await this.apiRequest('/bt/research_code_save',{straid:id,content,version_name:value.trim(),base_version:head,base_content:base,parent_version:parent})
+        if(this.curStra?.id===id){const row=result.saved_version;this.content_bak=content;this.codeHead=this.codeParent=this._loadedCodeVersion=this.codeCurrent=row.version;this.codeVersions.push(row)}this.$message.success('已保存研究副本的新版本');return true
+      }catch(error){if(error instanceof Error)this.$message.error(error.message);return false}finally{this.saving=false}
+    },
+    async openPublish(){
+      if(!this.allowEdit()||this.saving||this.codeLoading)return
+      const id=this.curStra?.id
+      if((this.dirty||!this.codeParent)&&!await this.onSaveCode())return
+      if(this.curStra?.id!==id)return
+      const row=this.codeVersions.find(row=>row.version===this.codeParent)||this.codeVersions.find(row=>row.version===this.codeHead)
+      if(!row)return;this.publishForm={straid:id,version:row.version,name:(this.curStra.name+' · '+row.version_name).slice(0,80),library_id:'research_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8)};this.showPublish=true
+    },
+    async publishCode(){
+      if(this.publishing||!this.publishForm.name.trim())return;this.publishing=true
+      try{const value=await this.apiRequest('/bt/research_code_publish',{straid:this.curStra.id,...this.publishForm});this.showPublish=false;await this.loadLibrary();this.$message.success('已新增独立策略：'+value.strategy.name+'。尚未应用到交易。')}
+      catch(error){this.$message.error(error.message)}finally{this.publishing=false}
+    },
+    async onClickCancel(){if(!this.dirty)return;try{await this.$confirm('放弃尚未保存的修改？','撤销修改',{confirmButtonText:'放弃修改',cancelButtonText:'继续编写'})}catch{return}this.content=this.content_bak;this.codeParent=this._loadedCodeVersion=this.codeCurrent},
     async onRunBacktest(){if(!this.allowEdit())return;if(this.launching||!this.curStra)return;const cfg=this.btConfig;if(!cfg.dataset){this.$message.error('请选择真实行情数据集；没有数据请前往历史数据管理');return}const fill=this.strategyType==='cta'?{fill_model:cfg.fill_model,event_delay:cfg.event_delay,participation_rate:cfg.participation_rate}:{};if(!(cfg.startTime instanceof Date)||!(cfg.endTime instanceof Date)||cfg.startTime>cfg.endTime){this.$message.error('请选择有效的起止日期');return}try{await this.$confirm('使用当前代码与配置启动历史回测？','启动回测',{confirmButtonText:'启动',cancelButtonText:'取消'})}catch{return}this.launching=true;if(!await this.onSaveCode()){this.launching=false;return}const id=this.curStra.id;this.$api.runBacktest(id,cfg.startTime.format('yyyyMMdd'),cfg.endTime.format('yyyyMMdd'),cfg.capital,cfg.slippage,result=>{this.launching=false;if(result.result<0){this.$message.error('启动失败：'+result.message);return}this.showBTCfg=false;this.$message.success('回测任务已启动');if(this.curStra?.id===id){this.backtests.push(result.backtest);this.selData='editor'}},{...fill,dataset:cfg.dataset,risk:this.risk})},
     onStopBacktest(info){if(!this.allowEdit())return;this.$api.stopBacktest(this.curStra.id,info.id,result=>{if(result.result<0)this.$message.error(result.message);else this.refreshBacktests()})},
     async onDelBacktest(info){if(!this.allowEdit())return;if(info.status==='running'){this.$message.warning('请先停止回测');return}try{await this.$confirm('删除该回测记录？','删除回测',{confirmButtonText:'删除',cancelButtonText:'取消'})}catch{return}this.$api.delBacktest(info.id,result=>{if(result.result<0)this.$message.error(result.message);else{this.backtests=this.backtests.filter(bt=>bt.id!==info.id);if(this.curBT?.id===info.id){this.curBT=null;this.selData='editor'}}})},
@@ -143,6 +189,7 @@ export default {
 }
 </script>
 <style scoped>
+.wt-library-cards{display:grid;gap:7px}.wt-library-card{display:flex;flex-direction:column;gap:7px;width:100%;padding:12px;text-align:left;border:1px solid var(--wt-line);border-radius:7px;background:var(--wt-surface);color:var(--wt-text);cursor:pointer}.wt-library-card:hover{background:var(--wt-hover)}.wt-library-card small{font-size:10px;color:var(--wt-muted)}
 .wt-research-mask,.wt-research-picker{display:none}
 .wt-research{height:100%;display:flex;min-width:0;overflow:hidden}.wt-strategy-count{font-size:10px;color:var(--wt-muted);margin:14px 0 12px}.wt-stra-metrics{justify-content:space-between;color:var(--wt-muted);font-variant-numeric:tabular-nums}.wt-stra-metrics b{font-weight:400;margin-left:3px}
 .wt-type-badge{display:inline-flex;align-items:center;background:var(--wt-hover);color:var(--wt-muted);font:10px/18px var(--wt-mono);border-radius:4px;padding:0 5px;letter-spacing:.2px;white-space:nowrap}.wt-research-note{font-size:11px;color:var(--wt-muted);line-height:1.8;margin:20px 0 0}
@@ -155,4 +202,5 @@ export default {
 .wt-research-welcome{display:flex;flex:1;align-items:center;justify-content:center;flex-direction:column;text-align:center;color:var(--wt-muted)}.wt-research-welcome>.wt-icon{width:36px;height:36px;opacity:.5}.wt-research-welcome h2{font-size:20px;font-weight:450;color:var(--wt-text);margin-bottom:8px}.wt-research-welcome p{font-size:12px;line-height:1.8;margin-bottom:24px}
 .wt-create-description{font-size:12px;color:var(--wt-muted);line-height:1.8}.wt-callback-list{display:flex;flex-wrap:wrap;gap:7px}.wt-callback-list code{font:10px var(--wt-mono);padding:4px 6px;border-radius:4px;background:var(--wt-matte)}.wt-bt-form{margin-top:20px}
 @media(max-width:1100px){.wt-editor-hint{display:none}.wt-code-file{margin-right:auto}.wt-detail-id{display:none}.wt-research-top{flex-basis:56px}.wt-manual-link{font-size:10px}}
+.wt-card-result{font-size:10px;color:var(--wt-muted);line-height:1.6;margin-top:6px;}
 </style>

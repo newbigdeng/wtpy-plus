@@ -1,6 +1,6 @@
 import {reactive} from 'vue'
 const saved=localStorage.getItem('wt.workspace.theme')
-export const themeState=reactive({value:'light',preference:['light','dark','system'].includes(saved)?saved:'light'})
+export const themeState=reactive({value:'dark',preference:['light','dark','system'].includes(saved)?saved:'dark'})
 const media=window.matchMedia('(prefers-color-scheme: dark)')
 function applyTheme(){
  themeState.value=themeState.preference==='system'?(media.matches?'dark':'light'):themeState.preference

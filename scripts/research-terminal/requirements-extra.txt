@@ -1,0 +1,4 @@
+QuantLib==1.44
+numpy-financial==1.1.0
+mcp==2.3.0
+akshare==1.20.18

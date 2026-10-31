@@ -53,7 +53,7 @@ def coverage(payload, helper):
         for bar in read_bars(helper, path, is_history):
             if in_range(bar, payload):
                 key = stamp(bar, payload["period"])
-                records[key] = {"date": int(bar.date), "stamp": key, "source": source}
+                records.setdefault(key, {"date": int(bar.date), "stamp": key, "source": source})
     return {"records": [records[key] for key in sorted(records)]}
 
 
@@ -78,7 +78,7 @@ def merge(payload, helper):
     merged = list(existing)
     occupied = {stamp(bar, period) for bar in existing}
     native_copied = 0
-    for bar in read_bars(helper, realtime, False):
+    for bar in read_bars(helper, realtime, False) if payload.get("copy_realtime", True) else []:
         key = stamp(bar, period)
         if in_range(bar, payload) and key not in occupied:
             merged.append(bar)

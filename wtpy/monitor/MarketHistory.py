@@ -21,6 +21,7 @@ from .ChannelProfiles import channel_transition_lock
 from .MarketSessions import CALENDAR
 from .MarketSubscriptions import MarketSubscriptions, _inside, _load
 from .Roles import can_operate, can_read, group_allowed
+from .CNEquityHistory import availability as cne_availability, request as cne_request, settings as cne_settings
 from wtpy.StrategyRuntime import atomic_json
 
 PERIODS = {"d": "日线", "m1": "1 分钟", "m5": "5 分钟"}
@@ -31,10 +32,10 @@ def day_value(value):
     return datetime.strptime(str(value), "%Y%m%d").date()
 
 
-def days_between(start, end):
+def days_between(start, end, max_days=31):
     start, end = day_value(start), day_value(end)
-    if end < start or (end - start).days > 30:
-        raise ValueError("请选择连续 31 天以内的日期")
+    if end < start or (end - start).days >= max_days:
+        raise ValueError("请选择连续 %d 天以内的日期" % max_days)
     return [start + timedelta(days=n) for n in range((end - start).days + 1)]
 
 
@@ -216,28 +217,26 @@ class MarketHistory:
         replay = _load(ctx["root"] / "run/config.yaml").get("monitor", {}).get("market_mode") == "simnow_replay"
         ak_installed = importlib.util.find_spec("akshare") is not None
         private = json.loads(self.provider.config_path.read_text()) if self.provider.config_path.is_file() else {}
-        lake = private.get("cnequity", {}).get("data_root", "")
-        cne_ready = bool(lake and Path(lake).is_dir() and importlib.util.find_spec("cnequity"))
-        cne_reason = "从已配置的 CNEquity 数据湖读取期货逐合约日线及 1 分钟线" if cne_ready else "需安装 CNEquity 并在云端凭据文件配置 cnequity.data_root；不把股票 trade_ticks 当期货 Tick"
+        cne = cne_availability(cne_settings(private))
         ak_periods = [dict(value=p, label=label, available=ak_installed,
             reason="仅返回平台仍保留的具体合约 K 线；不能补 Tick，旧分钟数据可能取不到" if ak_installed else "运行环境未安装 AkShare") for p,label in PERIODS.items()]
-        return dict(result=0, message="外部平台只补真实返回的 K 线，不把 K 线标成 Tick", can_backfill=not replay and not self.dog.isRunning(groupid),
+        return dict(result=0, message="外部平台只补真实返回的 K 线，不把 K 线标成 Tick", can_backfill=not replay and not self.dog.isRunning(groupid), can_prepare_lake=not replay and cne["available"],
                     providers=[dict(id="akshare", label="AkShare（默认）", configured=ak_installed, available=ak_installed,
                                     reason="新浪具体合约日线和分钟线；历史范围由源端决定" if ak_installed else "运行环境未安装 AkShare", periods=ak_periods, max_days=31,
                                     documentation="https://akshare.akfamily.xyz/data/futures/futures.html"),
                                dict(id="tushare", label="Tushare", configured=configured, available=available,
                                     reason="接口已就绪" if available else "期货接口尚未授权或尚未检查权限", periods=periods, max_days=31, checked_at=status.get("checked_at")),
-                               dict(id="cnequity", label="CNEquity 数据湖", configured=cne_ready, available=cne_ready,
-                                    periods=[dict(value=p,label=PERIODS[p],available=cne_ready,reason=cne_reason) for p in ("d","m1")], max_days=31,
-                                    reason=cne_reason, documentation="https://rootsunc.github.io/CNEquity/datasets/catalog/"),
+                               dict(id="cnequity", label="CNEquity 数据湖", configured=cne["available"], **cne,
+                                    periods=[dict(value=p,label=PERIODS[p],**cne) for p in PERIODS], max_days=366,
+                                    documentation="https://rootsunc.github.io/CNEquity/datasets/catalog/"),
                                dict(id="ifind", label="同花顺 iFinD", configured=False, available=False, periods=[], max_days=31, reason="需另行配置已授权的 iFinD 账号与接口"),
                                dict(id="wind", label="Wind", configured=False, available=False, periods=[], max_days=31, reason="需另行配置已授权的 Wind API 与运行环境")],
                     reason="回放测试环境不能混入真实市场历史数据" if replay else "交易引擎须停止；写入前协调数据中台")
 
-    def context(self, groupid, code, period, start_date, end_date):
+    def context(self, groupid, code, period, start_date, end_date, max_days=31):
         if period not in PERIODS:
             raise ValueError("支持日线、1分钟、5分钟；不能用它们补造 Tick")
-        days = days_between(start_date, end_date)
+        days = days_between(start_date, end_date, max_days)
         ctx = self.subscriptions.context(groupid)
         info = next((item for item in ctx["catalog"] if item["code"] == code), None)
         if info is None:
@@ -264,9 +263,28 @@ class MarketHistory:
             raise ValueError(value.get("error") or "WT 历史文件操作失败")
         return value
 
-    def coverage(self, groupid, code, period, start_date, end_date):
-        ctx = self.context(groupid, code, period, start_date, end_date)
+    def lake(self, ctx, period, start_date, end_date, action="coverage"):
+        private = json.loads(self.provider.config_path.read_text()) if self.provider.config_path.is_file() else {}
+        value = cne_settings(private)
+        access = cne_availability(value)
+        if not access["available"]:
+            raise ValueError(access["reason"])
+        expected = {}
+        for day in ctx["days"]:
+            stamps = expected_stamps(day, ctx["session"], period)
+            if stamps is None:
+                raise ValueError("交易日历未覆盖所选日期，不能确认数据湖缺口")
+            expected[str(number(day))] = sorted(stamps)
+        code = tushare_code(ctx["contract"])
+        ticker, suffix = code.split(".")
+        return cne_request(value, dict(action=action, symbol=ticker+"."+{"CFX":"CFE","ZCE":"CZC"}.get(suffix,suffix),
+            period=period, start_date=start_date, end_date=end_date, expected=expected), timeout=900 if action == "ensure" else 30)
+
+    def coverage(self, groupid, code, period, start_date, end_date, provider=""):
+        ctx = self.context(groupid, code, period, start_date, end_date, 366 if provider == "cnequity" else 31)
         records = self.worker(ctx, period, start_date, end_date)["records"]
+        lake = self.lake(ctx, period, start_date, end_date)["lake"] if provider == "cnequity" else None
+        lake_dates = {row["date"]: row for row in lake["dates"]} if lake else {}
         source_path=ctx["storage"] / "import-sources.json"
         sources=json.loads(source_path.read_text()) if source_path.is_file() else {}
         provenance=sources.get(code+"/"+period,{})
@@ -281,10 +299,11 @@ class MarketHistory:
             names={r["source"] for r in actual}
             names.update(item["provider"]+"补数记录" for item in provenance.get(str(value),[]))
             rows.append(dict(date=value, status=status, rows=len(actual), expected_rows=len(expected) if expected is not None else None,
-                             source="、".join(sorted(names)) or "—"))
+                             source="、".join(sorted(names)) or "—", lake_rows=lake_dates.get(value, {}).get("rows"), lake_status=lake_dates.get(value, {}).get("status")))
         return dict(result=0, code=code, period=period, start_date=start_date, end_date=end_date, dates=rows,
                     missing_dates=[r["date"] for r in rows if r["status"] in ("missing", "partial")], absent_dates=[r["date"] for r in rows if not r["rows"]],
-                    storage=str(ctx["storage"]), source=CALENDAR["source"], message="按交易日检查；分钟线包含上一交易日夜盘，日历范围之外标为未确认")
+                    storage=str(ctx["storage"]), source=CALENDAR["source"], lake=lake,
+                    message="WT 与数据湖分别按交易日检查；缺失时仅采集源端能提供的范围" if lake else "按交易日检查；分钟线包含上一交易日夜盘，日历范围之外标为未确认")
 
     def _ensure_stopped(self, ctx):
         for group in self.data_mgr.get_groups():
@@ -294,10 +313,11 @@ class MarketHistory:
     def submit(self, groupid, provider, code, period, start_date, end_date, restart_collector=False):
         with channel_transition_lock, self.lock:
             self._check_stopping()
-            ctx = self.context(groupid, code, period, start_date, end_date)
-            self._ensure_stopped(ctx)
+            ctx = self.context(groupid, code, period, start_date, end_date, 366 if provider == "cnequity" else 31)
+            if provider != "cnequity":
+                self._ensure_stopped(ctx)
             permitted = self.providers(groupid)
-            if not permitted["can_backfill"]:
+            if not permitted["can_backfill"] and not (provider == "cnequity" and permitted["can_prepare_lake"]):
                 raise ValueError(permitted["reason"])
             platform = next((p for p in permitted["providers"] if p["id"] == provider), None)
             access = next((p for p in platform["periods"] if p["value"] == period), None) if platform else None
@@ -306,7 +326,7 @@ class MarketHistory:
             now = datetime.now(CN)
             if day_value(end_date) > now.date() or (day_value(end_date) == now.date() and now.hour < 16):
                 raise ValueError("请选择已经结束的交易日，避免把盘中数据当作完整历史")
-            if self.dog.isRunning(ctx["profile"]["datahub_id"]) and not restart_collector:
+            if provider != "cnequity" and self.dog.isRunning(ctx["profile"]["datahub_id"]) and not restart_collector:
                 raise ValueError("请先停止采集，或勾选允许写入时短暂停采并自动恢复")
             if any(j["status"] in ("queued", "running") for j in self.jobs):
                 raise ValueError("已有补数任务正在运行，请等待完成")
@@ -324,12 +344,9 @@ class MarketHistory:
             from .HistoryCatalog import native_worker
             ak_rows = native_worker(dict(action="akshare", ticker=ctx["contract"]["ticker"], period=period))["rows"]
         elif job["provider"] == "cnequity":
-            from .HistoryCatalog import native_worker
-            private = json.loads(self.provider.config_path.read_text())
-            ticker, suffix = code.split(".")
-            symbol = ticker+"."+{"CFX":"CFE","ZCE":"CZC"}.get(suffix,suffix)
-            ak_rows = native_worker(dict(action="cnequity", data_root=private["cnequity"]["data_root"],
-                symbol=symbol,period=period,start_date=job["start_date"],end_date=job["end_date"]))["rows"]
+            result = self.lake(ctx, period, job["start_date"], job["end_date"], "ensure")
+            ak_rows = result["rows"]
+            job["lake"] = result["lake"]
         if period == "d":
             rows = ak_rows if ak_rows is not None else self.provider.request("fut_daily", dict(ts_code=code, start_date=str(job["start_date"]), end_date=str(job["end_date"])),
                                          "ts_code,trade_date,open,high,low,close,settle,vol,amount,oi")
@@ -349,6 +366,8 @@ class MarketHistory:
                 rows += self.provider.request("ft_mins", dict(ts_code=code, freq="1min" if period=="m1" else "5min", start_date=text+" 00:00:00", end_date=text+" 23:59:59"),
                                               "ts_code,trade_time,open,high,low,close,vol,amount,oi")
         if not rows:
+            if job["provider"] == "cnequity" and period != "d":
+                raise ValueError("所选日期没有可用分钟行情；当前源只提供最近窗口，历史文件未改动")
             raise ValueError("平台没有返回所选合约日期的数据，未写入文件")
         bars = normalize_bars(rows, period, allowed)
         if not bars:
@@ -365,7 +384,24 @@ class MarketHistory:
                 current=self.subscriptions.context(job["groupid"])
                 if current["root"] != ctx["root"]:
                     raise ValueError("通道环境已切换，请在目标环境重新补数")
-                self._ensure_stopped(ctx)
+                if job["provider"] == "cnequity":
+                    records = self.worker(ctx, job["period"], job["start_date"], job["end_date"])["records"]
+                    existing = {row["stamp"] for row in records if row["source"] == "WT历史"}
+                    incoming = {bar["date"] if job["period"] == "d" else bar["time"]+199000000000 for bar in bars}
+                    if incoming.issubset(existing):
+                        self._completed(job, dict(rows=0, received_rows=len(bars), already_present_rows=len(incoming)), False)
+                        return
+                    try:
+                        self._ensure_stopped(ctx)
+                        if self.dog.isRunning(ctx["profile"]["datahub_id"]) and not restart_collector:
+                            raise ValueError("采集正在运行，尚未允许短暂停采")
+                    except ValueError as error:
+                        with self.lock:
+                            job.update(status="ready", message="数据湖已准备，WT 尚未写入："+str(error), finished_at=int(time.time()*1000))
+                            self._save_jobs()
+                        return
+                else:
+                    self._ensure_stopped(ctx)
                 appid=ctx["profile"]["datahub_id"]
                 was_running=bool(self.dog.isRunning(appid))
                 if was_running and not restart_collector:
@@ -388,15 +424,21 @@ class MarketHistory:
                         self.dog.start(appid)
                         if not self.dog.isRunning(appid):
                             raise ValueError("写入后采集器恢复失败，请在调度中心检查")
-            with self.lock:
-                job.update(result,status="completed",message="历史文件已补写；已有时间点保留",finished_at=int(time.time()*1000),collector_restarted=was_running)
-                self._save_jobs()
+            self._completed(job, result, was_running)
         except Exception as error:
             message=str(error)
             token=self.provider.token()
             if token:message=message.replace(token,"[已隐藏]")
             with self.lock:
                 job.update(status="failed",error=message,finished_at=int(time.time()*1000));self._save_jobs()
+
+    def _completed(self, job, result, collector_restarted):
+        message = "WT 对应时间点已有记录，跳过写入" if result.get("already_present_rows") else "WT 新增 %d 条；已有时间点保留" % result["rows"]
+        if job.get("lake", {}).get("missing_dates"):
+            message += "；数据湖仍有 %d 个交易日缺失或不完整，源端未提供的历史没有补造" % len(job["lake"]["missing_dates"])
+        with self.lock:
+            job.update(result,status="completed",message=message,finished_at=int(time.time()*1000),collector_restarted=collector_restarted)
+            self._save_jobs()
 
 
 def register_market_history_routes(app, data_mgr, dog, check_auth, manifest_path=None, data_dir=None):
@@ -422,14 +464,14 @@ def register_market_history_routes(app, data_mgr, dog, check_auth, manifest_path
         user,error=authorize(request,token,groupid,refresh)
         if error:return error
         try:
-            result=history.providers(groupid,refresh);result["can_backfill"] &= can_operate(user);return result
+            result=history.providers(groupid,refresh);result["can_backfill"] &= can_operate(user);result["can_prepare_lake"] &= can_operate(user);return result
         except (ValueError,OSError,KeyError)as error:return failure(error)
 
     @app.post("/mgr/market/coverage",tags=["历史行情"])
-    def coverage(request:Request,groupid:str=Body(...,embed=True),code:str=Body(...,embed=True),period:str=Body(...,embed=True),start_date:int=Body(...,embed=True),end_date:int=Body(...,embed=True),token:str=Body(None,embed=True)):
+    def coverage(request:Request,groupid:str=Body(...,embed=True),code:str=Body(...,embed=True),period:str=Body(...,embed=True),start_date:int=Body(...,embed=True),end_date:int=Body(...,embed=True),provider:str=Body("",embed=True),token:str=Body(None,embed=True)):
         user,error=authorize(request,token,groupid)
         if error:return error
-        try:return history.coverage(groupid,code,period,start_date,end_date)
+        try:return history.coverage(groupid,code,period,start_date,end_date,provider)
         except (ValueError,OSError,KeyError,subprocess.TimeoutExpired)as error:return failure(error)
 
     @app.post("/mgr/market/backfill",tags=["历史行情"])

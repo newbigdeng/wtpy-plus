@@ -15,10 +15,14 @@ export function strategyFunds(rows, aggregated = false) {
   if (aggregated) return rows.map(row => ({ ...row }))
   let previous = null
   return [...rows].sort((a, b) => Number(a.date) - Number(b.date)).map(source => {
+    if (source.daily_basis) {
+      previous = source
+      return { ...source }
+    }
     const row = { ...source,
-      profit: Number(source.closeprofit) - Number(previous?.closeprofit || 0),
-      thisfee: Number(source.fee) - Number(previous?.fee || 0),
-      addition: Number(source.dynbalance) - Number(previous?.dynbalance || 0)
+      profit: previous ? Number(source.closeprofit) - Number(previous.closeprofit) : null,
+      thisfee: previous ? Number(source.fee) - Number(previous.fee) : null,
+      addition: previous ? Number(source.dynbalance) - Number(previous.dynbalance) : null
     }
     previous = row
     return row

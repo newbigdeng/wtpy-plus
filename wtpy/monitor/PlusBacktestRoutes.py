@@ -81,12 +81,15 @@ def register_plus_routes(app, bt_mon, check_auth, manager=None):
 
     @app.post("/bt/plus/detail", tags=["Plus 仿真回测"])
     def detail(request: Request, taskid: str = Body(..., embed=True),
+               ledger: str = Body(None, embed=True), offset: int = Body(0, ge=0, embed=True),
+               limit: int = Body(200, ge=1, le=1000, embed=True), include_log: bool = Body(False, embed=True),
                token: str = Body(None, embed=True)):
         user, error = authorize(request, token, read=True)
         if error:
             return error
         try:
-            value = manager.detail(user["loginid"], taskid)
+            value = manager.detail(user["loginid"], taskid, ledger=ledger, offset=offset,
+                                   limit=limit, include_log=include_log)
         except (OSError, ValueError, RuntimeError) as exc:
             return error_response(exc)
         if value is None:

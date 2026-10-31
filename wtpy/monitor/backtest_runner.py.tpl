@@ -1,6 +1,13 @@
 """Isolated typed backtest child. No live trader/parser is created."""
-import inspect, json, signal, threading, time
+import inspect, json, os, signal, threading, time
 from pathlib import Path
+# The host may update the offline library without replacing the live engine.
+runtime = Path(os.environ.get('WT_BACKTEST_RUNTIME', '/opt/wt/cloud/backtest-runtime.json'))
+if runtime.is_file():
+    library = Path(json.loads(runtime.read_text(encoding='utf-8'))['bt_porter_lib'])
+    if not library.is_file():
+        raise RuntimeError('Configured backtest library is unavailable')
+    os.environ['WTPY_BT_PORTER_LIB'] = str(library)
 import MyStrategy
 from wtpy import BaseCtaStrategy, BaseHftStrategy, BaseSelStrategy, WtBtEngine, EngineType
 from wtpy.apps import WtBtAnalyst

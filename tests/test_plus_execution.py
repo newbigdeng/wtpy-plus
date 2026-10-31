@@ -89,14 +89,14 @@ class NativeExecutionTests(unittest.TestCase):
         self.manager = PlusBacktestManager(self.workspace/'tasks', workspace=self.workspace)
         self.addCleanup(self.manager.shutdown)
 
-    def run_task(self, source, kind='HFT', capital=100000, execution=None):
+    def run_task(self, source, kind='HFT', capital=100000, execution=None, dataset='rb2701-synthetic-path', period='m1'):
         task = self.manager.create('test-user','test-strategy',source,kind,'SHFE.rb.2701',
-                                   'rb2701-synthetic-path',capital=capital,finance=FEES,execution=execution)
+                                   dataset,capital=capital,finance=FEES,execution=execution,period=period)
         deadline = time.monotonic()+35
         while time.monotonic() < deadline:
             detail = self.manager.detail('test-user', task['id'])
             if detail['task']['status'] in ('completed','failed','stopped') and 'exitcode' in detail['task']:
-                self.assertEqual(detail['task']['status'], 'completed', detail['log_tail'])
+                self.assertEqual(detail['task']['status'], 'completed', detail['task'].get('error') or detail['log_tail'])
                 return detail
             time.sleep(.03)
         self.fail('Native replay did not exit')
@@ -140,6 +140,16 @@ class NativeExecutionTests(unittest.TestCase):
             schedules[kind] = [(x['time'],x['volume']) for x in detail['trades']]
             self.assertGreater(len({x[0] for x in schedules[kind]}), 2)
         self.assertNotEqual(schedules['twap'], schedules['vwap'])
+
+    def test_minimpact_one_lot_is_a_clip_not_a_position_cap(self):
+        execution={'id':'minimpact','params':{'pricemode':1,'offset':10,'expire':5,'span':0,'lots':1}}
+        for target,expected in [(3,3),(.49,0),(.51,1)]:
+            with self.subTest(target=target):
+                source=CTA.replace('self.code,10)',f'self.code,{target})')
+                detail=self.run_task(source,'CTA',execution=execution)
+                self.assertEqual(sum(row['volume'] for row in detail['trades']),expected)
+                self.assertTrue(all(row['volume']==1 for row in detail['trades']))
+                self.assertEqual(sum(row['volume'] for row in detail['positions']),expected)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,12 @@
+{
+  "workspace_root": "/var/lib/wt-research",
+  "research_lock": "/var/lib/wt-research/factor-research.lock",
+  "rd_agent": {
+    "base_url": "http://127.0.0.1:8082/api/v1",
+    "model": "codex/gpt-6-astra",
+    "reasoning_effort": "high",
+    "max_calls_per_day": 16,
+    "timeout_seconds": 600,
+    "budget_file": "/var/lib/wt-research/rd-budget.json"
+  }
+}

@@ -100,6 +100,39 @@ class RiskRuleTests(unittest.TestCase):
                 wrapped.on_tick(ctx, method, "SHFE.rb.2701", 4)
                 self.assertEqual(ctx.calls, [])
 
+    def test_absolute_loss_limit_does_not_grow_with_account_equity(self):
+        for capital in (10000,1000000):
+            with self.subTest(capital=capital):
+                self.account.update(equity=capital,prebalance=capital,deposit=0,withdraw=0,source="TraderAdapter柜台回执")
+                wrapped=self.wrap([rule("day_loss_amount",150)])
+                ctx=Context();wrapped.on_tick(ctx,"set_position","SHFE.rb.2701",0)
+                ctx.calls.clear();self.account["equity"]=capital-149
+                wrapped.on_tick(ctx,"set_position","SHFE.rb.2701",1)
+                self.assertEqual(ctx.position,1)
+                wrapped.on_tick(ctx,"set_position","SHFE.rb.2701",0)
+                ctx.calls.clear();self.account["equity"]=capital-150
+                wrapped.on_tick(ctx,"set_position","SHFE.rb.2701",1)
+                self.assertEqual(ctx.calls,[])
+                ctx.position=1
+                wrapped.on_tick(ctx,"set_position","SHFE.rb.2701",0)
+                self.assertEqual(ctx.position,0)
+
+    def test_absolute_drawdown_uses_amount_and_cash_flows_fail_closed(self):
+        self.account.update(equity=1000000,prebalance=1000000,deposit=0,withdraw=0,source="TraderAdapter柜台回执")
+        wrapped=self.wrap([rule("drawdown_amount",150)])
+        ctx=Context();wrapped.on_tick(ctx,"set_position","SHFE.rb.2701",0)
+        self.account["equity"]=1000100
+        wrapped.on_tick(ctx,"set_position","SHFE.rb.2701",0)
+        ctx.calls.clear();self.account["equity"]=999949
+        wrapped.on_tick(ctx,"set_position","SHFE.rb.2701",1)
+        self.assertEqual(ctx.calls,[])
+        for account in [dict(self.account,equity=1000100,deposit=1000),
+                        {key:value for key,value in dict(self.account,equity=1000100).items() if key!="withdraw"}]:
+            with self.subTest(account_fields=list(account)):
+                self.account=account;ctx.calls.clear()
+                wrapped.on_tick(ctx,"set_position","SHFE.rb.2701",1)
+                self.assertEqual(ctx.calls,[])
+
     def test_reductions_pass_and_reverse_keeps_conditional_reducing_leg(self):
         ctx = Context(5)
         wrapped = self.wrap([rule(limit=1)])

@@ -1,0 +1,29 @@
+[Unit]
+Description=WT on-demand research terminal
+After=network-online.target wt-agentbridge.service
+
+[Service]
+User=wt-research
+WorkingDirectory=/srv/wt-research/terminal
+ExecStart=/srv/wt-research/venv/bin/python terminal_service.py
+Environment=WT_REVIEW_OPS=/etc/wt-research
+Environment=OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-/etc/wt-research/proxy.env
+Restart=on-failure
+RestartSec=10
+Nice=15
+CPUQuota=35%
+CPUWeight=10
+MemoryHigh=384M
+MemoryMax=640M
+TasksMax=48
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/wt-research
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

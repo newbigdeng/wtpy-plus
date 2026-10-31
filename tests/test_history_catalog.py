@@ -54,6 +54,18 @@ class HistoryCatalogTests(unittest.TestCase):
         self.assertEqual(len(actual),5)
         self.assertTrue(Path(data["basefiles"]["contract"]).is_relative_to(folder))
 
+    def test_research_filters_before_inspecting_ticks_or_other_groups(self):
+        tick=self.profile/"FUT_Data/his/ticks/SHFE/20261019/rb2701.dsb"
+        tick.parent.mkdir(parents=True);tick.write_bytes(b"must not be read")
+        manifest=json.loads(self.manifest.read_text())
+        manifest["groups"]["private"]=[dict(manifest["groups"]["g"][0],root=str(self.root/"private"))]
+        self.manifest.write_text(json.dumps(manifest))
+        with patch("wtpy.monitor.HistoryCatalog._inspect_many",side_effect=lambda entries,**_:entries) as inspect:
+            rows=dataset_entries(self.root,periods=("m1","m5","d"),group_filter=lambda group:group=="g")
+        self.assertEqual([(row["groupid"],row["period"]) for row in rows],[("g","m1")])
+        self.assertEqual(inspect.call_count,1)
+        self.assertFalse(any(str(tick) in row["files"] for row in inspect.call_args.args[0]))
+
     def test_empty_day_inside_total_range_is_rejected(self):
         folder=self.root/"task";folder.mkdir()
         with self.assertRaisesRegex(ValueError,"没有行情"):
@@ -79,6 +91,23 @@ class HistoryCatalogTests(unittest.TestCase):
         self.assertEqual(set(rows),{"m1","d"})
         self.assertEqual((rows["d"]["rows"],rows["d"]["start"]),(2,202608031500))
         self.assertEqual(rows["m1"]["start"],202610160901)
+
+    def test_fill_preserves_every_existing_field_and_repeated_import_adds_nothing(self):
+        helper=WtDataHelper()
+        path=self.profile/"FUT_Data/his/min1/SHFE/rb2701.dsb"
+        original=helper.read_dsb_bars(str(path)).ndarray.copy()
+        payload=dict(storage=str(self.profile/"FUT_Data"),exchange="SHFE",ticker="rb2701",
+            period="m1",start_date=20261016,end_date=20261019,bars=[
+                dict(date=20261016,time=202610160901-199000000000,open=9000,high=9002,low=8999,close=9001,vol=999),
+                dict(date=20261016,time=202610160904-199000000000,open=3300,high=3302,low=3299,close=3301,vol=10)])
+        result=merge(payload,helper)
+        self.assertEqual(result["rows"],1)
+        after=helper.read_dsb_bars(str(path)).ndarray
+        actual={int(row["time"]):row for row in after}
+        for row in original:
+            self.assertEqual(row.tolist(),actual[int(row["time"])].tolist())
+        repeated=merge(payload,helper)
+        self.assertEqual((repeated["rows"],repeated["total_rows"]),(0,7))
 
     def test_explicit_refresh_bypasses_realtime_inventory_ttl(self):
         realtime=self.root/"realtime.dmb";realtime.write_bytes(b"native-worker-placeholder")

@@ -73,10 +73,12 @@ def _inspect_many(entries, refresh=False):
     return entries
 
 
-def dataset_entries(workspace="/workspace", manifest_path=None, refresh=False):
+def dataset_entries(workspace="/workspace", manifest_path=None, refresh=False, *, periods=None, group_filter=None):
     """IDs are configuration identities, never user paths or arbitrary hashes."""
     entries, contexts, owners = [], [], {}
     for groupid, profiles in load_profiles(manifest_file(workspace, manifest_path)).items():
+        if group_filter is not None and not group_filter(groupid):
+            continue
         for profile in profiles:
             root = Path(profile["root"]).resolve()
             folder = root/"datahub"
@@ -104,6 +106,8 @@ def dataset_entries(workspace="/workspace", manifest_path=None, refresh=False):
                     continue
                 code = exchange+"."+product+"."+ticker[len(product):]
                 for period, directory in (("tick","ticks"),("m1","min1"),("m5","min5"),("d","day")):
+                    if periods is not None and period not in periods:
+                        continue
                     files = sorted((storage/"his"/directory/exchange).glob("*/"+ticker+".dsb")) if period == "tick" else [storage/"his"/directory/exchange/(ticker+".dsb")]
                     files = [path for path in files if path.is_file() and not path.is_symlink()
                              and path.resolve().is_relative_to(storage)]

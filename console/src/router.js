@@ -14,6 +14,8 @@ const ApiManual=()=>import('@/components/backtest/ApiManual.vue')
 const StrategyLibrary=()=>import('@/components/strategies/StrategyLibrary.vue')
 const HistoryManager=()=>import('@/components/history/HistoryManager.vue')
 const RiskLibrary=()=>import('@/components/risk-library/main.vue')
+const TerminalWorkspace=()=>import('@/components/terminal/TerminalWorkspace.vue')
+const ResearchWorkspace=()=>import('@/components/research/ResearchWorkspace.vue')
 
 
 const router=createRouter({
@@ -40,6 +42,8 @@ const router=createRouter({
                 {path: '/backtest', name:"backtest", component: Backtest},
                 {path: '/strategies', name:"strategies", component: StrategyLibrary},
                 {path: '/history', name:"history", component: HistoryManager},
+                {path:'/terminal',name:'terminal',component:TerminalWorkspace},
+                {path: '/research', name:"research", component: ResearchWorkspace},
                 {path: '/risk-library', name:"risk-library", component: RiskLibrary},
                 {path: '/schedule', name:"schedule", component: Schedule},
                 {path: '/admins', name:"admins", component: Admins}
@@ -62,6 +66,7 @@ router.beforeEach(async to=>{
  if(role==='guest')return true
  if(to.path==='/admins'&&!['admin','superman'].includes(role))return '/monitor'
  if(to.path==='/backtest'&&!['researcher','admin','superman'].includes(role))return '/monitor'
+ if(['/research','/terminal'].includes(to.path)&&!['researcher','admin','superman'].includes(role))return '/monitor'
  if(to.path==='/schedule'&&!['admin','superman'].includes(role))return '/monitor'
  return true
 })

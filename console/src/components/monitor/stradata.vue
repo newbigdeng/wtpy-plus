@@ -5,13 +5,13 @@
                 <div style="height:100%;display:flex;flex-direction:row;">
                     <div style="flex:0 0 auto;height:100%;">
                         <el-tabs :model-value="selCat" tab-position="top" @tab-click="handleCatChange" style="height:100%;margin:0;">
-                            <el-tab-pane label="持仓明细" name="pos">
+                            <el-tab-pane label="理论持仓" name="pos">
                             </el-tab-pane>
-                            <el-tab-pane label="成交明细" name="trd">
+                            <el-tab-pane label="理论成交" name="trd">
                             </el-tab-pane>
                             <el-tab-pane label="信号明细" name="sig">
                             </el-tab-pane>
-                            <el-tab-pane label="回合明细" name="rnd">
+                            <el-tab-pane label="理论回合" name="rnd">
                             </el-tab-pane>
                             <el-tab-pane label="每日绩效" name="fnd" v-if="isAdmin">
                             </el-tab-pane>
@@ -46,6 +46,7 @@
                 </div>
             </el-header>
             <el-main style="overflow:auto;border-bottom: 1px solid #E4E7ED;">
+                <p v-if="['pos','trd','rnd'].includes(selCat)" style="font-size:12px;line-height:1.7;color:var(--wt-muted);margin:0 0 12px;">策略引擎理论账簿。时间、价格与收益可能和实际执行不同。柜台实际成交见看盘区“成交”。</p>
                 <div style="max-height:100%;overflow:auto;" v-show="selCat=='pos'" v-loading="loading.position">
                     <DataTable :storage-key="'wt.data.'+groupid+'.stradata.1'"
                         border
@@ -297,6 +298,7 @@
                     </DataTable>
                 </div>
                 <div style="height:100%;display:flex;flex-direction:column;"  v-show="selCat=='fnd'" v-loading="loading.fund"  v-if="isAdmin">
+                    <p class="performance-source">策略理论账：按策略成交价与配置手续费计算。实际收支请查看账户权益。<br>累计值保留重置前历史。缺少日初持仓估值时，当日值显示“—”。</p>
                     <div style="flex:1;width:100%;overflow:auto;height:50%;border-bottom:1px solid #E4E7ED;">
                         <div style="max-height:100%;">
                             <DataTable :storage-key="'wt.data.'+groupid+'.stradata.5'"
@@ -316,14 +318,14 @@
                                         <span>{{fmtDate(scope.row.date)}}</span>
                                     </template>
                                 </el-table-column>
-                                <el-table-column label="当日盈亏" width="130">
-                                    <template #default="scope"><span :class="fmtProfit(scope.row.addition)">{{scope.row.addition.toFixed(2)}}</span></template>
+                                <el-table-column label="理论当日净损益" width="130">
+                                    <template #default="scope"><span :class="fmtProfit(scope.row.addition)">{{formatDaily(scope.row.addition)}}</span></template>
                                 </el-table-column>
                                 <el-table-column
-                                    label="平仓盈亏"
+                                    label="理论当日平仓"
                                     width="100">
                                     <template #default="scope">
-                                        <span :class="scope.row.profit>=0?'text-danger':'text-success'">{{scope.row.profit.toFixed(1)}}</span>
+                                        <span :class="fmtProfit(scope.row.profit)">{{formatDaily(scope.row.profit)}}</span>
                                     </template>
                                 </el-table-column>
                                 <el-table-column
@@ -333,14 +335,14 @@
                                         <span :class="scope.row.dynprofit>=0?'text-danger':'text-success'">{{scope.row.dynprofit.toFixed(1)}}</span>
                                     </template>
                                 </el-table-column>
-                                <el-table-column label="累计平仓盈亏" width="130">
+                                <el-table-column label="累计理论平仓" width="130">
                                     <template #default="scope"><span :class="fmtProfit(scope.row.closeprofit)">{{scope.row.closeprofit.toFixed(1)}}</span></template>
                                 </el-table-column>
                                 <el-table-column prop="fee" label="累计手续费" width="120" :formatter="formatAmount" />
                                 <el-table-column prop="thisfee" label="当日手续费" width="120" :formatter="formatAmount" />
                                 <el-table-column
                                     prop="dynbalance"
-                                    label="动态权益">
+                                    label="累计理论净损益">
                                     <template #default="scope">
                                         <span :class="scope.row.dynbalance>=0?'text-danger':'text-success'">{{scope.row.dynbalance.toFixed(1)}}</span>
                                     </template>
@@ -466,6 +468,7 @@ export default {
         }
     },
     methods: {
+        formatDaily(value) { return Number.isFinite(value) ? value.toFixed(2) : "—"; },
         handleCheckAutoData: function(val){
             this.resetDataInterval();
         },
@@ -643,7 +646,7 @@ export default {
             this.queryData();
         },
         formatAmount: function(row,col){
-            return row[col.property].toFixed(2);
+            return this.formatDaily(row[col.property]);
         },
         fmtPrice:function(val){
             let ret = val.toFixed(4);
@@ -959,6 +962,7 @@ export default {
 
 <!-- Add "scoped" attribute to limit CSS to this component only -->
 <style scoped>
+.performance-source {margin:8px 12px;color:var(--wt-muted);font-size:12px;line-height:1.8;}
 .el-header{
     padding: 0px 4px;
 }

@@ -44,3 +44,10 @@ ParserCTPFlow
 __pycache__/
 *.pyc
 /wtpy/wrapper/linux/*.so
+
+# Local-only research and verification data
+/.test-tmp/
+/private/
+/research-data/
+*.pem
+*.key

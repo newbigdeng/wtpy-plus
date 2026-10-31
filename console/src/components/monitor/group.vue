@@ -7,6 +7,7 @@
                 <el-tab-pane label="风控中心" name="risk"/>
                 <el-tab-pane label="数据" name="data"/>
                 <el-tab-pane label="行情数据" name="market"/>
+                <el-tab-pane label="账户权益" name="equity"/>
             </el-tabs>
             <div class="wt-data-content">
                 <TradingTerminal v-if="selData==='terminal'" :groupid="groupid" @overview="$emit('overview',$event)" @subscriptions="handleClickTab({props:{name:'market'}})"/>
@@ -14,6 +15,7 @@
                 <RiskPanel v-if="selData==='risk'" :groupid="groupid"/>
                 <DataWorkbench v-if="selData==='data'" :groupid="groupid"/>
                 <MarketDataPanel v-if="selData==='market'" :groupid="groupid"/>
+                <AccountEquityPage v-if="selData==='equity'" :groupid="groupid"/>
             </div>
         </section>
         <el-drawer v-model="showConfig" title="组合配置" size="min(900px, 96vw)" append-to-body>
@@ -46,12 +48,13 @@ import { mapState } from 'pinia';
 import { useSessionStore } from '@/store.js';
 import DataWorkbench from './DataWorkbench.vue'
 import MarketDataPanel from './MarketDataPanel.vue'
+import AccountEquityPage from './AccountEquityPage.vue'
 import {pushState} from '@/js/push.js'
 import Editor from './editor.vue'
 export default {
     name: 'empty',
     components: {
-        DataWorkbench, MarketDataPanel, Editor, WtIcon, ResizableDivider, TradingTerminal, StrategyRuntime, RiskPanel, ChannelProfiles
+        DataWorkbench, MarketDataPanel, AccountEquityPage, Editor, WtIcon, ResizableDivider, TradingTerminal, StrategyRuntime, RiskPanel, ChannelProfiles
     },
     computed: {
         pushConnected(){return pushState.connected},
@@ -88,7 +91,7 @@ export default {
         }
     },
     watch:{
-        '$route.query.tab'(value){if(['terminal','runtime','risk','data','market'].includes(value))this.selData=value},
+        '$route.query.tab'(value){if(['terminal','runtime','risk','data','market','equity'].includes(value))this.selData=value},
         '$route.query.config'(value){if(value==='1')this.showConfig=true},
         showConfig(value){this.$router.replace({query:{...this.$route.query,config:value?'1':undefined}})},
         groupinfo(newGrp, oldVal){
@@ -109,7 +112,7 @@ export default {
         return {
             showLogs: false,
             logHeight: 190,
-            selData:['terminal','runtime','risk','data','market'].includes(this.$route.query.tab)?this.$route.query.tab:(['terminal','runtime','risk','data','market'].includes(localStorage.getItem('wt.monitor.tab.'+this.groupinfo.id))?localStorage.getItem('wt.monitor.tab.'+this.groupinfo.id):'terminal'),
+            selData:['terminal','runtime','risk','data','market','equity'].includes(this.$route.query.tab)?this.$route.query.tab:(['terminal','runtime','risk','data','market','equity'].includes(localStorage.getItem('wt.monitor.tab.'+this.groupinfo.id))?localStorage.getItem('wt.monitor.tab.'+this.groupinfo.id):'terminal'),
             showConfig:this.$route.query.config==='1',configTab:'profiles',eventCount:0,
             logs:"",
             logfilter:"total",

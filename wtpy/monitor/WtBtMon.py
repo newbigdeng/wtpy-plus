@@ -709,6 +709,8 @@ class WtBtMon(BtTaskSink):
                 replay.update(mode="bin", tick=data_meta["tick_enabled"], bar_simulation="close_only",
                               store={"path": data_meta["storage"]})
                 replay.setdefault("basefiles", {}).update(data_meta["basefiles"])
+                if data_meta["basefiles"].get("fee"):
+                    replay["fees"] = data_meta["basefiles"]["fee"]
             content = json.dumps(config, ensure_ascii=False, indent=2)
 
             f = open(new_path, "w", encoding="UTF-8")

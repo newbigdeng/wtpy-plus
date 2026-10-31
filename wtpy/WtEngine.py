@@ -455,6 +455,45 @@ class WtEngine:
         """Request funds only; True acknowledges submission, not a fresh reply."""
         return self.__wrapper__.query_trade_account(trader)
 
+    @property
+    def supports_strategy_reset(self):
+        return self.__wrapper__.supports_strategy_reset
+
+    def request_strategy_reset(self, strategyid, trader, request_id, contracts):
+        return self.__wrapper__.request_strategy_reset(strategyid, trader, request_id, contracts)
+
+    def query_strategy_reset(self, request_id):
+        return self.__wrapper__.query_strategy_reset(request_id)
+
+    @property
+    def supports_strategy_reconcile(self):
+        return self.__wrapper__.supports_strategy_reconcile
+
+    def configure_strategy_reconcile(self, boot_id, plan_revision):
+        return self.__wrapper__.configure_strategy_reconcile(boot_id, plan_revision)
+
+    def request_strategy_reconcile(self, payload):
+        return self.__wrapper__.request_strategy_reconcile(payload)
+
+    def query_strategy_reconcile(self, request_id):
+        return self.__wrapper__.query_strategy_reconcile(request_id)
+
+    @property
+    def supports_strategy_startup_guard(self):
+        return self.__wrapper__.supports_strategy_startup_guard
+
+    def arm_strategy_startup_guard(self, nonce):
+        return self.__wrapper__.arm_strategy_startup_guard(nonce)
+
+    def release_strategy_startup_guard(self, nonce):
+        return self.__wrapper__.release_strategy_startup_guard(nonce)
+
+    def query_strategy_startup_guard(self):
+        return self.__wrapper__.query_strategy_startup_guard()
+
+    def wakeup_strategy_reset(self, request_id):
+        return self.__wrapper__.wakeup_strategy_reset(request_id)
+
     def on_init(self):
         if self.__reporter__ is not None:
             self.__reporter__.report_init_data()

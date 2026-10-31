@@ -33,6 +33,7 @@ from .ChannelProfiles import register_channel_routes, channel_transition_lock
 from .MarketSubscriptions import register_market_subscription_routes
 from .MarketHistory import register_market_history_routes
 from .PlusBacktestRoutes import register_plus_routes
+from .ResearchWorkspaceRoutes import register_research_routes
 from .TradeRiskApi import register_trade_risk_routes
 from .Roles import READ_ROLES, RESEARCH_ROLES, can_read, can_operate, can_admin, group_allowed, can_research_read
 from .GuestAccess import GuestAccessMiddleware, LoginAttempts, guest_session_valid, GUEST_READ_PATHS
@@ -323,6 +324,7 @@ class WtMonSvr(WatcherSink):
 
         self.__bt_mon__: WtBtMon = None
         self.__plus_mon__ = None
+        self.__research_mon__ = None
         self.__dt_servo__: WtDtServo = None
 
         # 秘钥和开启token访问，单独控制，减少依赖项
@@ -379,6 +381,8 @@ class WtMonSvr(WatcherSink):
         try:
             yield
         finally:
+            if self.__research_mon__ is not None:
+                await asyncio.to_thread(self.__research_mon__.shutdown)
             if self.__plus_mon__ is not None:
                 await asyncio.to_thread(self.__plus_mon__.shutdown)
             if self.__bt_mon__ is not None:
@@ -405,6 +409,9 @@ class WtMonSvr(WatcherSink):
         self.init_bt_apis(self.app)
         self.__plus_mon__ = register_plus_routes(self.app, btMon,
             lambda request, token: check_auth(request, token, self.__sec_key__))
+        self.__research_mon__ = register_research_routes(self.app, btMon,
+            lambda request, token: check_auth(request, token, self.__sec_key__),
+            workspace=os.environ.get('WT_PLUS_WORKSPACE','/workspace'))
 
     def set_dt_servo(self, dtServo: WtDtServo):
         '''
@@ -541,10 +548,13 @@ class WtMonSvr(WatcherSink):
                 }
                 return ret
 
+            from .BacktestPerformance import merge_latest_performance
+            strategies = await asyncio.to_thread(merge_latest_performance, self.__bt_mon__.get_strategies(user), user,
+                research_root=self.__bt_mon__.path, plus_manager=self.__plus_mon__)
             ret = {
                 "result": 0,
                 "message": "OK",
-                "strategies": self.__bt_mon__.get_strategies(user)
+                "strategies": strategies
             }
 
             return ret

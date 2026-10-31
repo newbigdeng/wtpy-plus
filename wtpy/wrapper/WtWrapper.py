@@ -33,6 +33,11 @@ class WtWrapper:
         _path = os.path.join(*a)
         if os.environ.get("WT_PLUS_NATIVE_DIR"):
             _path = os.path.join(os.path.realpath(os.environ["WT_PLUS_NATIVE_DIR"]), os.path.basename(dllname))
+        if os.environ.get("WTPY_PORTER_LIB"):
+            override = os.environ["WTPY_PORTER_LIB"]
+            if not os.path.isabs(override) or not os.path.isfile(override):
+                raise ValueError("WTPY_PORTER_LIB must name an existing absolute native library")
+            _path = os.path.realpath(override)
         self.api = cdll.LoadLibrary(_path)
         
         self.api.get_version.restype = c_char_p
@@ -407,6 +412,83 @@ class WtWrapper:
         query.argtypes = [c_char_p]
         query.restype = c_bool
         return bool(query(trader.encode("utf-8")))
+
+    @property
+    def supports_strategy_reset(self):
+        return all(hasattr(self.api, name) for name in ("request_strategy_reset", "query_strategy_reset", "wakeup_strategy_reset"))
+
+    def request_strategy_reset(self, strategyid, trader, request_id, contracts):
+        import json
+        request = self.api.request_strategy_reset
+        request.argtypes = [c_char_p, c_char_p, c_char_p, c_char_p]
+        request.restype = c_bool
+        return bool(request(strategyid.encode(), trader.encode(), request_id.encode(),
+                            json.dumps(contracts).encode()))
+
+    def query_strategy_reset(self, request_id):
+        import json
+        query = self.api.query_strategy_reset
+        query.argtypes = [c_char_p]
+        query.restype = c_char_p
+        raw = query(request_id.encode())
+        if not raw:
+            raise RuntimeError("原生策略重置未返回状态")
+        return json.loads(raw.decode("utf-8"))
+
+    def wakeup_strategy_reset(self, request_id):
+        wakeup = self.api.wakeup_strategy_reset
+        wakeup.argtypes = [c_char_p]
+        wakeup.restype = c_bool
+        return bool(wakeup(request_id.encode()))
+
+    @property
+    def supports_strategy_reconcile(self):
+        return all(hasattr(self.api, name) for name in (
+            'configure_strategy_reconcile', 'request_strategy_reconcile', 'query_strategy_reconcile'))
+
+    def configure_strategy_reconcile(self, boot_id, plan_revision):
+        if not self.supports_strategy_reconcile:
+            return False
+        configure = self.api.configure_strategy_reconcile
+        configure.argtypes = [c_char_p, c_char_p]
+        configure.restype = c_bool
+        return bool(configure(boot_id.encode(), plan_revision.encode()))
+
+    def request_strategy_reconcile(self, payload):
+        import json
+        request = self.api.request_strategy_reconcile
+        request.argtypes, request.restype = [c_char_p], c_bool
+        return bool(request(json.dumps(payload).encode()))
+
+    def query_strategy_reconcile(self, request_id):
+        import json
+        query = self.api.query_strategy_reconcile
+        query.argtypes, query.restype = [c_char_p], c_char_p
+        raw = query(request_id.encode())
+        if not raw:
+            raise RuntimeError('Native reconciliation returned no response')
+        return json.loads(raw.decode())
+
+    @property
+    def supports_strategy_startup_guard(self):
+        return self.supports_strategy_reconcile and all(hasattr(self.api, name) for name in (
+            'arm_strategy_startup_guard', 'release_strategy_startup_guard', 'query_strategy_startup_guard'))
+
+    def arm_strategy_startup_guard(self, nonce):
+        arm = self.api.arm_strategy_startup_guard
+        arm.argtypes, arm.restype = [c_char_p], c_bool
+        return bool(arm(nonce.encode()))
+
+    def release_strategy_startup_guard(self, nonce):
+        release = self.api.release_strategy_startup_guard
+        release.argtypes, release.restype = [c_char_p], c_bool
+        return bool(release(nonce.encode()))
+
+    def query_strategy_startup_guard(self):
+        import json
+        query = self.api.query_strategy_startup_guard
+        query.argtypes, query.restype = [], c_char_p
+        return json.loads(query().decode())
 
     def config(self, cfgfile:str = 'config.yaml', isFile:bool = True):
         self.api.config_porter(bytes(cfgfile, encoding = "utf8"), isFile)
@@ -1293,5 +1375,3 @@ class WtWrapper:
 
     def reg_exe_factories(self, factFolder:str):
         return self.api.reg_exe_factories(bytes(factFolder, encoding = "utf8") )
-
-    

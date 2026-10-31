@@ -29,6 +29,7 @@
             <main class="wt-workspace" :class="'workspace-'+$route.path.slice(1)">
                 <router-view @notify="handleNotify"/>
             </main>
+            <footer class="wt-statusbar"><strong>WT / TERMINAL</strong><span>{{roleName}}</span><span>行情、研究与交易状态独立核对</span><time>{{terminalClock}} CST</time></footer>
 
         </div>
         <el-dialog v-model="showCommands" title="跳转与操作" width="min(680px, 94vw)" @opened="$refs.commandInput?.focus()">
@@ -109,6 +110,8 @@ export default {
                 {path:'/backtest',icon:'backtest',label:'在线回测',hint:'策略研究与历史检验',show:this.isGuest || this.isResearcher || this.isAdmin},
                 {path:'/strategies',icon:'book',label:'策略管理',hint:'策略库、版本与源码',show:true},
                 {path:'/history',icon:'folder',label:'历史数据',hint:'数据覆盖、导入与清理',show:true},
+                {path:'/terminal',icon:'connection',label:'分析终端',hint:'分析、数据、AI 与工作流',show:this.isGuest || this.isResearcher},
+                {path:'/research',icon:'document',label:'研究',hint:'研报、复现实验与成果阅读',show:this.isGuest || this.isResearcher},
                 {path:'/risk-library',icon:'settings',label:'风控管理',hint:'可组合的风控规则',show:true},
             ].filter(item=>item.show)
         },
@@ -135,7 +138,7 @@ export default {
     components:{ WtIcon,ProcessControl },
     data () {
         return {
-           showConcepts:false,showCommands:false,commandQuery:'',commandGroups:[],
+           terminalClock:'',showConcepts:false,showCommands:false,commandQuery:'',commandGroups:[],
            concepts:[['组合','一起运行的一组策略。组合把各策略目标合并，再交给执行器。'],['策略理论持仓','策略想持有的数量。它可能尚未成交，与账户实际持仓不同。'],['交易通道','连接柜台的适配器。委托、成交、账户资金由它回报。'],['通道环境','柜台地址、账号、数据和运行目录的一套独立配置。切换前须停止组合。'],['引擎账簿','WT 记录的策略和组合损益。它不是柜台资金证明。'],['柜台账簿','交易账户回报的持仓、权益、保证金和手续费。请同时查看快照时间。'],['暂停决策','不再调用策略的决策回调。订单、成交回报仍继续处理；不会自动平仓。'],['过滤策略','把该策略对组合目标的贡献改为零。执行器调整账户净持仓，理论持仓保留。'],['风控预警','提示阈值超限。后台预警默认不下单，人工过滤与原生风控分别配置。'],['Plus 回测','历史行情走实盘引擎和交易适配器，再由模拟柜台撮合。']],
            railExpanded:localStorage.getItem('wt.workspace.railExpanded')==='true',
            showDlgModPwd: false,
@@ -235,8 +238,9 @@ export default {
             }
         }
     },
-    beforeUnmount(){window.removeEventListener('keydown',this.handleShortcut)},
+    beforeUnmount(){clearInterval(this._terminalClock);window.removeEventListener('keydown',this.handleShortcut)},
     mounted(){
+        const tick=()=>{this.terminalClock=new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})};tick();this._terminalClock=setInterval(tick,1000);
         window.addEventListener('keydown',this.handleShortcut);
         if(!this.cache.isLogined){
             this.$router.push("/login");

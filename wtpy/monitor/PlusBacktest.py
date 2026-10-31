@@ -112,17 +112,19 @@ def dataset_catalog(workspace):
     choices = [item for item in dataset_entries(workspace) if item["period"] == "tick" and item["rows"]] + choices
     return choices
 class PlusBacktestManager:
-    def __init__(self, root, *, workspace="/workspace", max_concurrent=2):
+    def __init__(self, root, *, workspace="/workspace", max_concurrent=2, recover_running=True, cache_root=None):
         self.root = Path(root).resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
-        os.chmod(self.root, 0o700)
+        if recover_running:
+            self.root.mkdir(parents=True, exist_ok=True)
+            os.chmod(self.root, 0o700)
+        self.cache_root = Path(cache_root).resolve() if cache_root else None
         self.workspace = Path(workspace).resolve()
         self.max_concurrent = max(1, min(int(max_concurrent), 4))
         self.lock = threading.RLock()
         self.processes = {}
         self.stopping = set()
         self.closing = False
-        for path in self.root.glob("*/task.json"):
+        for path in self.root.glob("*/task.json") if recover_running else ():
             task = read_json(path, {})
             if task and task.get("status") not in TERMINAL:
                 task.update(status="failed", error="监控进程重启中断了此任务；未把残留结果视为完成。", updated_at=time.time())
@@ -197,7 +199,8 @@ class PlusBacktestManager:
         with self.lock:
             path = self.root/taskid/"task.json"
             task = read_json(path, {})
-            report=read_json(self.root/taskid/"report.json", {})
+            from .PlusReport import read_view
+            report=read_view(self.root/taskid)
             if task and (self.root/taskid/"stop.request").exists() and task.get("status") not in TERMINAL:
                 message = "策略未在5秒内退出，已强制停止；仅保留已写出的数据。" if result == -signal.SIGKILL else ""
                 task.update(status="stopped", error=message, updated_at=time.time())
@@ -219,15 +222,22 @@ class PlusBacktestManager:
         tasks = [read_json(p, {}) for p in self.root.glob("*/task.json")]
         return sorted([x for x in tasks if x.get("user")==str(user) and (straid is None or x.get("straid")==str(straid))],
                       key=lambda x:x["created_at"], reverse=True)
-    def detail(self, user, taskid):
+    def detail(self, user, taskid, *, ledger=None, offset=0, limit=200, include_log=False):
+        from .PlusReport import read_view, ledger_page, log_tail
         path, task = self._owned(user, taskid)
-        report = read_json(path/"report.json", {}) or {}
+        if not isinstance(offset, int) or offset < 0 or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise ValueError("回测账簿分页范围无效")
+        report = read_view(path, self.cache_root/taskid if self.cache_root else None)
         result = {key:report.get(key, []) for key in ("orders","trades","funds","positions","events","rejections")}
-        result.update(task=task, route=report.get("route", self.capabilities()["route"]),
+        result.update(task=task, route=report.get("route", []),
                       risk=report.get("risk", {"selection":task.get("risk"), "events":[]}),
                       data_model=report.get("data_model", task.get("data_model")),
                       limitations=report.get("limitations", LIMITATIONS if task.get("finance") else ["旧任务使用零手续费账簿；没有保证金或滑点模型，需重新运行以应用新参数。"]), summary=report.get("summary", {}),
-                      log_tail=(path/"runner.log").read_text(encoding="utf-8",errors="replace")[-12000:] if (path/"runner.log").exists() else "")
+                      ledger_totals=report.get("ledger_totals", {}), equity_curve=report.get("equity_curve", []),
+                      diagnostics=report.get("diagnostics", {}),
+                      log_tail=log_tail(path) if include_log else "")
+        if ledger is not None:
+            result["ledger_page"] = ledger_page(path, report, ledger, offset, limit)
         return result
     def stop(self, user, taskid):
         with self.lock:

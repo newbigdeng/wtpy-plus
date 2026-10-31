@@ -8,7 +8,7 @@
   <ManagedStrategies v-if="tab==='plan'" :groupid="groupid" :running="running" @changed="$emit('changed',$event)"/>
   <template v-else>
   <el-alert type="info" :closable="false" show-icon
-   title="暂停决策保留原目标。过滤把本策略的目标贡献归零，经后续 CTA 调度交给执行器退仓；配置已写入不代表已经成交。"/>
+   title="暂停会停止策略行情决策，含策略自身止损；不撤已有委托，也不平仓。目标过滤令执行器目标归零，可能触发平仓，但不清理论持仓。解除过滤可能恢复旧目标。"/>
   <el-table :data="strategies" stripe class="runtime-table" empty-text="暂无已登记策略；请确认组合已启动并注册策略">
    <el-table-column prop="name" label="策略" min-width="145">
     <template #default="{row}"><strong>{{row.name || row.id}}</strong><el-button v-if="canControl" link size="small" @click="rename(row)" :aria-label="'重命名策略 '+(row.name||row.id)">改名</el-button><small class="runtime-id">{{row.id}}</small></template>
@@ -91,7 +91,7 @@ export default {
    if(this.isGuest){this.$message.warning('游客模式不支持操作');return}
    const groupid=this.groupid,action=row.state==='paused'?'resume':'pause'
    const text=action==='pause'
-    ?'暂停后跳过后续决策回调，并阻止新交易提交。原有持仓、委托、条件单及执行器目标仍可能继续。目标过滤状态保持不变。确认暂停决策？'
+    ?'暂停后停止策略行情决策，包含策略自身止损。暂停不撤已有委托、不平仓；原有执行器目标仍可能继续。目标过滤状态保持不变。确认暂停决策？'
     :'恢复后接收后续行情并可能提交新交易指令；不补跑暂停期间的信号。'+(row.filter_enabled?'本策略仍处于过滤状态，目标继续受过滤配置约束。':'')+'确认恢复决策？'
    try{
     await this.$confirm(text,action==='pause'?'暂停策略决策':'恢复策略决策',{type:'warning',confirmButtonText:'确认',cancelButtonText:'取消'})

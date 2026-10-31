@@ -1,11 +1,12 @@
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
 from urllib.parse import quote
 
 from wtpy.monitor.TradeRiskApi import trade_risk_snapshot
-from wtpy.monitor.WorkbenchApi import WorkbenchFeed
+from wtpy.monitor.WorkbenchApi import WorkbenchFeed, capital_performance
 
 
 class AccountEquityTests(unittest.TestCase):
@@ -17,6 +18,9 @@ class AccountEquityTests(unittest.TestCase):
         self.folder.mkdir()
         self.feed = WorkbenchFeed(self.root / "history")
         self.now = 1792464000000
+        identity=self.folder/"config.json"
+        identity.write_text(json.dumps({"traders":[{"id":"mock","broker":"test","user":"account-a"}]}))
+        os.utime(identity, ((self.now-7200000)/1000,)*2)
         self.path = self.folder / "generated/traders/mock/rtdata.json"
         self.path.parent.mkdir(parents=True)
 
@@ -71,7 +75,51 @@ class AccountEquityTests(unittest.TestCase):
         self.assertEqual(len(account["history"]), 1)
         self.assertEqual(account["history"][0]["equity"], 102500)
         self.assertEqual(account["legacy_balance_samples"], 1)
-        self.assertEqual(json.loads(target.read_text())["legacy_balance"], legacy)
+        self.assertEqual(json.loads(target.with_suffix(".accounts-v3.json").read_text())["legacy_balance"], legacy)
+
+    def test_explicit_session_reset_starts_new_segment_without_erasing_history(self):
+        self.sample(self.snapshot(self.now))
+        target = self.feed.history_root / "group" / (quote(str(self.folder.resolve()), safe="") + ".json")
+        event = {"time": self.now + 1000, "type": "simnow_reset",
+                 "reason": "夜盘重置后的首笔已保存回执", "requested_capital": 10000}
+        target.with_suffix(".capital-events.json").write_text(json.dumps({"mock:CNY": [event]}))
+        # Both receipts belong to the same trading day. Resetting capital is
+        # independent of the calendar date and of the broker trading date.
+        accounts = self.snapshot(self.now + 1000)
+        accounts[0]["equity"] = 9984
+        result = self.sample(accounts)
+        self.assertEqual([row["equity"] for row in result["history"]], [102500, 9984])
+        self.assertEqual([row["equity"] for row in result["current_history"]], [9984])
+        self.assertEqual(result["history_before_reset_samples"], 1)
+        self.assertEqual(result["capital_events"], [event])
+        restarted = WorkbenchFeed(self.feed.history_root)
+        repeated = self.snapshot(self.now + 1000)
+        restarted.account_series("group", repeated, self.folder)
+        self.assertEqual(repeated[0]["current_history"], result["current_history"])
+
+    def test_loss_without_explicit_capital_event_does_not_reset_history(self):
+        self.sample(self.snapshot(self.now))
+        accounts = self.snapshot(self.now + 1000)
+        accounts[0]["equity"] = 100
+        result = self.sample(accounts)
+        self.assertEqual(result["current_history"], result["history"])
+        self.assertEqual(result["history_before_reset_samples"], 0)
+        self.assertEqual(result["capital_events"], [])
+
+    def test_total_profit_uses_confirmed_capital_not_old_twenty_million_equity(self):
+        event={"type":"simnow_reset","time":self.now,"confirmed_at":self.now+1,"requested_capital":10000}
+        account={"valid":True,"equity":9957.833,"updated_at":self.now+2,"currency":"CNY","deposit":0,"withdraw":0,"timestamp_source":"柜台查询回执时间"}
+        result=capital_performance(account,[event])
+        self.assertTrue(result["valid"]);self.assertAlmostEqual(result["pnl"],-42.167)
+        self.assertAlmostEqual(result["pnl_pct"],-.42167)
+        self.assertFalse(capital_performance(account,[])["valid"])
+        account["deposit"]=2000
+        self.assertFalse(capital_performance(account,[event])["valid"])
+        account["deposit"]=0;account["valid"]=False
+        historical=capital_performance(account,[event])
+        self.assertTrue(historical["valid"]);self.assertFalse(historical["fresh"])
+        account["timestamp_source"]="文件时间（旧快照）"
+        self.assertFalse(capital_performance(account,[event])["valid"])
 
 
 if __name__ == "__main__":

@@ -47,21 +47,32 @@ def _builtin(rule, request, account, state):
         return "原生账户数据缺失或过期，无法计算资金风险"
     if kind == "min_available":
         return "当前可用资金低于开仓下限" if account[field] < limit else None
-    if kind == "day_loss_pct":
+    if (kind in ("day_loss_amount", "drawdown_amount")
+            and account.get("source") not in ("TraderMocker原生账户", "快速Mocker原生盈亏+指定初始资金")):
+        if not _finite(account.get("prebalance")) or account["prebalance"] <= 0:
+            return "缺少原生上日权益，无法确认金额风控基准"
+        if not all(_finite(account.get(key)) for key in ("deposit", "withdraw")):
+            return "缺少原生出入金字段，无法确认金额风控基准"
+        if account["deposit"] or account["withdraw"]:
+            return "账户发生出入金，金额风控基准需要重新确认"
+    if kind in ("day_loss_pct", "day_loss_amount"):
         baseline = state.get("day_baseline")
         if not _finite(baseline) or baseline <= 0:
             return "缺少有效当日权益基准"
-        value = max(0, (baseline-account["equity"])/baseline*100)
+        loss = max(0, baseline-account["equity"])
+        value = loss/baseline*100 if kind == "day_loss_pct" else loss
         return "当日权益亏损达到上限" if value >= limit else None
-    if kind == "drawdown_pct":
+    if kind in ("drawdown_pct", "drawdown_amount"):
         high = state.get("peak")
         if not _finite(high) or high <= 0:
             return "缺少有效权益高点"
-        return "权益回撤达到上限" if (high-account["equity"])/high*100 >= limit else None
+        drawdown = max(0, high-account["equity"])
+        value = drawdown/high*100 if kind == "drawdown_pct" else drawdown
+        return "权益回撤达到上限" if value >= limit else None
     raise ValueError("未注册的风控类型：" + kind)
 
 
-for _kind in ("max_order_lots", "max_position_lots", "min_available", "day_loss_pct", "drawdown_pct"):
+for _kind in ("max_order_lots", "max_position_lots", "min_available", "day_loss_pct", "drawdown_pct", "day_loss_amount", "drawdown_amount"):
     register_rule(_kind, _builtin)
 
 
@@ -319,6 +330,17 @@ class RiskRuntime:
 
     def wrap(self, strategy, kind, channel=""):
         return _RiskStrategy(strategy, self, _State(strategy.name(), kind, channel))
+
+    def replace_strategy(self, previous, strategy):
+        """Clear execution intent after broker confirmation, keeping risk history."""
+        if not isinstance(previous, _RiskStrategy) or previous.runtime is not self:
+            raise ValueError("策略风控包装与运行实例不一致")
+        with previous.state.lock:
+            previous.strategy = strategy
+            previous.state.pending.clear()
+            previous.state.targets.clear()
+            previous.state.views.clear()
+        return previous
 
     def event(self, state, rule, code, method, quantity, target, reason):
         row = dict(type="pretrade_risk", strategy=state.name, channel=state.channel, code=code,

@@ -54,7 +54,7 @@ for (const width of [360, 390]) {
 
     await page.setViewportSize({width: 1600, height: 1000})
     await expect(page.locator('.wt-rail')).toHaveCSS('position', 'static')
-    await expect(page.locator('.terminal-cockpit')).toHaveCSS('grid-template-columns', /(?:\S+ ){6}\S+/)
+    await expect(page.locator('.terminal-cockpit')).toHaveCSS('grid-template-columns', /(?:\S+ ){7}\S+/)
     expect(f.errors).toEqual([])
     expect(f.calls.some(call => /start|stop|trade|order|cmt/.test(call.path))).toBe(false)
   })

@@ -23,7 +23,7 @@
    <el-alert v-if="!state.managed" type="warning" :closable="false" show-icon title="原有入口中的策略不会自动迁移。先逐一导入并核对；应用时将切换到页面管理入口，原 run.py 保留。"/>
    <el-alert v-if="!supportedEngine" type="info" :closable="false" show-icon title="页面托管交易组合目前支持 CTA 和 HFT；SEL 原生回测保持可用。现有 SEL 启动入口保持原样。"/>
    <p v-if="processRunning" class="managed-note">请先停止组合，再修改策略计划。停止进程不会自动平仓，请先核对持仓与未成交委托。</p>
-   <template v-if="state.existing_strategies?.length"><h4>已有运行或账簿策略</h4><el-table :data="state.existing_strategies" stripe><el-table-column label="策略" min-width="170"><template #default="{row}"><strong>{{row.name||row.id}}</strong><small>{{row.id}}</small></template></el-table-column><el-table-column label="持仓" width="150"><template #default="{row}"><el-tag :type="row.has_positions?'warning':'info'">{{positionLabel(row)}}</el-tag></template></el-table-column><el-table-column label="启动归属" min-width="230"><template #default="{row}">尚未加入页面计划<small>保留原入口与历史账簿；不会自动接管或复制源码。</small></template></el-table-column></el-table></template>
+   <template v-if="state.existing_strategies?.length"><h4>已有运行或账簿策略</h4><el-table :data="state.existing_strategies" stripe><el-table-column label="策略" min-width="170"><template #default="{row}"><strong>{{row.name||row.id}}</strong><small>{{row.id}}</small></template></el-table-column><el-table-column label="持仓" width="150"><template #default="{row}"><el-tag :type="row.has_positions?'warning':'info'">{{positionLabel(row)}}</el-tag></template></el-table-column><el-table-column label="启动归属" min-width="230"><template #default="{row}">尚未加入页面计划<small>保留原入口与历史账簿；不会自动接管或复制源码。</small></template></el-table-column><el-table-column label="操作" min-width="150"><template #default="{row}"><el-button link type="warning" :aria-label="'重置策略 '+row.id" :disabled="!canInspectReset(row)" :title="resetInfo(row).reset_reason||'当前入口未提供重置能力'" @click="openReset(row)">重置</el-button><small v-if="resetInfo(row).reset_task" class="managed-reset-status">{{resetLabel(resetInfo(row).reset_task)}} · {{resetInfo(row).reset_task.error||resetInfo(row).reset_task.message}}</small></template></el-table-column></el-table></template>
    <div class="managed-toolbar"><strong>{{plan.engine_type}} 页面策略 · {{plan.strategies.length}}</strong><el-button type="primary" plain :disabled="!isGuest&&!editable" @click="addStrategy">从策略库添加</el-button></div>
    <el-table :data="plan.strategies" stripe empty-text="尚无页面管理策略。请从策略库选择策略并配置实例。">
     <el-table-column label="策略实例" min-width="160"><template #default="{row}"><strong>{{row.name||row.id}}</strong><small>{{row.id}} · {{row.class_name}}</small><small>{{row.library_id?row.library_id+' · v'+row.library_version:'旧计划固定快照'}}</small></template></el-table-column>
@@ -32,7 +32,7 @@
     <el-table-column label="下次启动" width="110"><template #default="{row}"><el-tag :type="row.enabled?'success':'info'" effect="plain">{{row.enabled?'加载':'不加载'}}</el-tag></template></el-table-column>
     <el-table-column label="交易通道" min-width="130"><template #default="{row}">{{channelName(row.trader)}}</template></el-table-column>
     <el-table-column label="执行方式" min-width="130"><template #default="{row}">{{row.engine_type==='HFT'?'策略直接委托':executorName(row.execution?.id)}}</template></el-table-column>
-    <el-table-column label="操作" width="190"><template #default="{row}"><el-button link @click="view(row)">查看</el-button><el-button link :disabled="!isGuest&&!editable" @click="edit(row)">编辑</el-button><el-button link type="danger" :disabled="!isGuest&&!editable" @click="remove(row)">移除</el-button></template></el-table-column>
+   <el-table-column label="操作" min-width="270"><template #default="{row}"><el-button link @click="view(row)">查看</el-button><el-button link :disabled="!isGuest&&!editable" @click="edit(row)">编辑</el-button><el-button link type="danger" :disabled="!isGuest&&!editable" @click="remove(row)">移除</el-button><el-button link type="warning" :aria-label="'重置策略 '+row.id" :disabled="!canInspectReset(row)" :title="resetInfo(row).reset_reason||'先柜台退仓，确认后清理当前状态'" @click="openReset(row)">重置</el-button><small v-if="resetInfo(row).reset_task" class="managed-reset-status" :class="{'reset-failed':resetInfo(row).reset_task.status==='failed'}">{{resetLabel(resetInfo(row).reset_task)}} · {{resetInfo(row).reset_task.error||resetInfo(row).reset_task.message}}</small></template></el-table-column>
    </el-table>
    <RiskSelection v-model="plan.risk" :engine-type="plan.engine_type" :disabled="!editable" @update:model-value="dirty=true"/>
    <p class="managed-note">风控选择随启动计划生效。请停机应用并使用页面管理入口；原 run.py 不会自动接入交易前风控。</p>
@@ -100,21 +100,23 @@
    </div>
    <template #footer><el-button @click="showEditor=false">{{viewOnly?'关闭':'取消'}}</el-button><el-button v-if="!viewOnly" type="primary" :disabled="analyzing" @click="commitStrategy">加入页面草稿</el-button></template>
   </el-dialog>
+  <StrategyResetPanel v-if="!create" ref="strategyReset" :groupid="groupid" @task="rememberReset" @changed="$emit('changed',$event)"/>
  </section>
 </template>
 
 <script>
 import {useSessionStore} from '@/store.js'
 import RiskSelection from '@/components/common/RiskSelection.vue'
+import StrategyResetPanel from './StrategyResetPanel.vue'
 const copy=value=>JSON.parse(JSON.stringify(value))
 const defaults=id=>id==='minimpact'?{pricemode:1,offset:0,expire:5,span:0,byrate:false,lots:1}:{begin_time:900,end_time:1500,ord_sticky:5,tail_secs:5,total_times:10,price_mode:2,price_offset:0,lots:1,minopenlots:1}
 const blankStrategy=engine=>({id:'',name:'',class_name:'',engine_type:engine,source:'',library_id:'',library_version:null,params:{},trader:'',execution:{id:'minimpact',params:defaults('minimpact')},enabled:true,slippage:0,agent:true})
 export default {
  name:'ManagedStrategies',
- components:{RiskSelection},
+ components:{RiskSelection,StrategyResetPanel},
  props:{groupid:{type:String,default:''},create:{type:Boolean,default:false},running:{type:Boolean,default:undefined}},
  emits:['created','changed','cancel'],
- data:()=>({catalog:{},state:{},library:[],selectedLibrary:'',plan:{schema:1,revision:0,engine_type:'CTA',strategies:[],trading_enabled:false},newGroup:{groupid:'',name:'',template_groupid:'',engine_type:'CTA'},loading:false,saving:false,applying:false,dirty:false,showEditor:false,viewOnly:false,editingId:'',draft:blankStrategy('CTA'),classes:[],parameterFields:[],extraParams:'{}',weights:'',filename:'',analyzing:false,serial:0,showContracts:false,contractRow:null,contractCatalog:[],contractSelection:[],contractPreview:null,contractError:'',contractLoading:false,contractPreviewing:false}),
+ data:()=>({catalog:{},state:{},resetTasks:{},library:[],selectedLibrary:'',plan:{schema:1,revision:0,engine_type:'CTA',strategies:[],trading_enabled:false},newGroup:{groupid:'',name:'',template_groupid:'',engine_type:'CTA'},loading:false,saving:false,applying:false,dirty:false,showEditor:false,viewOnly:false,editingId:'',draft:blankStrategy('CTA'),classes:[],parameterFields:[],extraParams:'{}',weights:'',filename:'',analyzing:false,serial:0,showContracts:false,contractRow:null,contractCatalog:[],contractSelection:[],contractPreview:null,contractError:'',contractLoading:false,contractPreviewing:false}),
  computed:{
   isGuest(){return useSessionStore().cache.userinfo?.role==='guest'},
   isAdmin(){return['admin','superman'].includes(useSessionStore().cache.userinfo?.role)},
@@ -127,6 +129,11 @@ export default {
   executionFields(){return this.draft.execution.id==='minimpact'?[{key:'pricemode',label:'价格模式（-1本方／0最新／1对手／2自动）',min:-1,max:2},{key:'offset',label:'委托偏移跳数',min:-1000,max:1000},{key:'expire',label:'挂单超时秒',max:86400},{key:'span',label:'最短发单间隔毫秒',max:86400000},{key:'lots',label:'单次委托手数',min:1}]:[{key:'begin_time',label:'窗口开始（HHMM）',max:2359},{key:'end_time',label:'窗口结束（HHMM）',max:2359},{key:'ord_sticky',label:'挂单超时秒',max:86400},{key:'tail_secs',label:'窗口收尾秒数',max:86400},{key:'total_times',label:'拆单次数',min:1,max:10000},{key:'price_mode',label:'价格模式（0最新／1本方／2对手）',max:2},{key:'price_offset',label:'委托偏移跳数',max:1000},{key:'lots',label:'单次委托手数',min:1},{key:'minopenlots',label:'最小拆单手数',min:1}]}
  },
  methods:{
+  resetInfo(row){const status=this.state.strategy_status?.[row.id]||row;return {...status,id:row.id,name:row.name||status.name,reset_reason:status.reset_reason||(status.reset_supported?'':'后台未确认重置能力，请刷新计划'),reset_task:this.resetTasks?.[row.id]||status.reset_task}},
+  canInspectReset(row){const info=this.resetInfo(row);return this.isAdmin&&this.state.can_manage!==false&&Boolean(info.reset_supported||info.reset_task)},
+  resetLabel(task){return {queued:'已排队',running:'重置中',completed:'重置完成',failed:'重置失败'}[task.status]||'等待回执'},
+  openReset(row){if(this.canInspectReset(row))this.$refs.strategyReset.open(this.resetInfo(row))},
+  rememberReset(task){this.resetTasks={...this.resetTasks,[task.strategyid]:task}},
   async request(path,body={}){const response=await fetch('/mgr/'+path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok||value.result<0)throw new Error(value.message||'运行计划请求失败');return value},
   permit(){if(this.isGuest){this.$message.warning('游客模式不支持操作');return false}if(!this.isAdmin){this.$message.warning('仅管理员可以修改运行计划');return false}if(!this.create&&!this.editable){this.$message.warning(this.processRunning?'请先停止组合，再修改运行计划':'此组合暂不可修改');return false}return true},
   channelName(id){return this.catalog.channels?.find(row=>row.id===id)?.label||id||'尚未选择'},
@@ -154,12 +161,13 @@ export default {
   async setTrading(enabled){if(!this.permit())return;if(enabled)try{await this.$confirm('开启后，之后手动启动组合时，已加载策略可以向所选通道提交真实委托。请先核对账户环境、策略及风控。此操作不会启动进程。','允许此组合交易',{type:'warning',confirmButtonText:'允许之后手动启动交易',cancelButtonText:'保持只读'})}catch{return}this.plan.trading_enabled=Boolean(enabled);this.dirty=true},
   async save(apply){if(!this.permit()||this.saving||this.applying)return;try{if(apply){await this.$confirm((!this.state.managed?'应用后调度入口切换为页面管理程序。原 run.py 会保留，但其中原有策略不会自动加载。请确认已完整迁移。':'应用策略草稿到下次启动配置。')+'进程守护与定时启动将关闭，当前不会启动交易。'+(!this.plan.strategies.some(row=>row.enabled)?'计划没有启用策略，应用后无法启动交易进程。':'')+(this.plan.trading_enabled?'交易授权已开启，之后手动启动可能下单。':'交易授权保持关闭。'),'应用到启动配置',{type:'warning',confirmButtonText:'应用，不启动',cancelButtonText:'取消'})}this.saving=!apply;this.applying=apply;const value=await this.request('save_strategy_plan',{groupid:this.groupid,plan:{...this.plan,strategies:this.plan.strategies.map(({source,...row})=>row)},apply,confirm_takeover:apply&&!this.state.managed});this.$message.success(value.message||(apply?'启动配置已应用，进程未启动':'草稿已保存'));await this.load();this.$emit('changed',value)}catch(error){if(error instanceof Error)this.$message.error(error.message)}finally{this.saving=false;this.applying=false}}
  },
- watch:{groupid(){this.load()}},
+ watch:{groupid(){this.resetTasks={};this.load()}},
  mounted(){this.load()},beforeUnmount(){++this.serial}
 }
 </script>
 
 <style scoped>
+.managed-reset-status{white-space:normal}.managed-strategies .reset-failed{color:var(--wt-danger)}
 .managed-contract-select{width:100%;margin:14px 0}.managed-strategies{color:var(--wt-text);min-width:0}.managed-intro,.managed-note,.managed-heading p,.managed-trading p{color:var(--wt-muted);font-size:12px;line-height:1.8;margin:8px 0}.managed-heading,.managed-toolbar,.managed-footer,.managed-status,.managed-file,.managed-trading{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.managed-heading{justify-content:space-between}.managed-heading h3{font-size:17px;margin:0 0 6px;font-weight:600}.managed-status{margin:16px 0;font-size:12px;color:var(--wt-muted)}.managed-toolbar{justify-content:space-between;margin:20px 0 12px;font-size:13px}.managed-strategies small{display:block;font-size:11px;color:var(--wt-muted);line-height:1.7;margin-top:4px}.managed-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 20px}.managed-form-grid .el-select,.managed-form-grid .el-input-number{width:100%}.managed-footer{justify-content:flex-end;margin-top:18px}.managed-footer>span{margin-right:auto;font-size:11px;color:var(--wt-muted)}.managed-file{font-size:12px;color:var(--wt-muted);margin:18px 0}.managed-applied{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 16px;border:1px solid var(--wt-line);border-radius:8px;background:var(--wt-matte);margin:14px 0;font-size:12px}.managed-applied>span{color:var(--wt-muted)}.managed-applied p{width:100%;margin:0;color:var(--wt-danger);line-height:1.7}.managed-trading{justify-content:space-between;margin-top:18px;padding:16px;border:1px solid var(--wt-line);border-radius:8px;background:var(--wt-matte)}.managed-trading strong{font-size:13px}.managed-trading p{margin-bottom:0}.managed-editor{max-height:69vh;overflow:auto;padding:0 8px}.managed-editor h4{font-size:14px;margin:24px 0 10px}.managed-editor .el-select{width:100%}.managed-parameter{display:flex;align-items:center;gap:8px;width:100%}.managed-parameter .el-select{width:90px;flex:0 0 90px}.managed-parameter>.el-input,.managed-parameter>.el-input-number{flex:1;min-width:0}.managed-advanced{font-size:12px;color:var(--wt-muted);margin:16px 0;line-height:1.8}.managed-advanced summary{cursor:pointer}.managed-source{font:12px/1.8 var(--wt-mono);max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;padding:14px;border:1px solid var(--wt-line);border-radius:7px;background:var(--wt-matte);color:var(--wt-text)}
 @media(max-width:640px){.managed-form-grid{grid-template-columns:1fr}.managed-heading{align-items:flex-start}.managed-editor{padding:0}.managed-footer{gap:8px}}
 </style>

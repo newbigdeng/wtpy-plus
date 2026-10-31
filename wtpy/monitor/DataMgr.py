@@ -4,7 +4,46 @@ import os
 import sqlite3
 import hashlib
 import datetime
+import csv
+import threading
 from .WtLogger import WtLogger
+
+_channel_cache_lock = threading.RLock()
+
+
+def _channel_records(cache, field, decode, encoding, errors="strict"):
+    """Reuse unchanged ledgers and rebuild the cache when a file is replaced."""
+    with _channel_cache_lock:
+        try:
+            stat = os.stat(cache["file"])
+        except FileNotFoundError:
+            cache.update({field: [], "lastrow": 0})
+            cache.pop("signature", None)
+            cache.pop("last_line", None)
+            return cache[field]
+        signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        previous = cache.get("signature")
+        if previous == signature:
+            return cache[field]
+        with open(cache["file"], "r", encoding=encoding, errors=errors) as stream:
+            opened = os.fstat(stream.fileno())
+            signature = (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+            lines = stream.readlines()
+        # A writer may still be completing the final CSV record.
+        if lines and not lines[-1].endswith("\n"):
+            lines.pop()
+        rows = lines[1:]
+        last_row = cache["lastrow"]
+        replaced = previous and (previous[:2] != signature[:2] or signature[2] <= previous[2])
+        boundary_changed = last_row and (last_row > len(rows) or cache.get("last_line") != rows[last_row-1])
+        if replaced or boundary_changed:
+            cache[field] = []
+            last_row = 0
+        additions = [decode(cells) for cells in csv.reader(rows[last_row:])]
+        cache[field].extend(additions)
+        cache.update(lastrow=len(rows), last_line=rows[-1] if rows else None, signature=signature)
+        return cache[field]
+
 
 def backup_file(filename):
     if not os.path.exists(filename):
@@ -21,6 +60,16 @@ def backup_file(filename):
     shutil.copy(filename, target)
 
 class DataMgr:
+
+    @classmethod
+    def from_groups(cls, groups):
+        """Read-only file getters for trusted group paths, without opening a DB."""
+        instance = cls.__new__(cls)
+        instance.__grp_cache__ = {}
+        instance.__logger__ = None
+        instance.__db_conn__ = None
+        instance.__config__ = {"groups": {row["id"]: dict(row) for row in groups}, "users": {}}
+        return instance
 
     def __init__(self, datafile:str="mondata.db", logger:WtLogger=None):
         self.__grp_cache__ = dict()
@@ -477,140 +526,32 @@ class DataMgr:
         return trdCache["trades"][-limit:]
 
     def get_funds(self, grpid:str, straid:str):
-        if grpid not in self.__config__["groups"]:
+        group = self.__config__["groups"].get(grpid)
+        if group is None:
             return []
-
-        grpInfo = self.__config__["groups"][grpid]
-        self.__check_cache__(grpid, grpInfo)
-
-        if "strategies" not in self.__grp_cache__[grpid]:
+        self.__check_cache__(grpid, group)
+        strategies = self.__grp_cache__[grpid].get("strategies", [])
+        if straid != "all" and straid not in strategies:
             return []
-        
+        from .StrategyPerformance import strategy_funds
         if straid != "all":
-            if straid not in self.__grp_cache__[grpid]["strategies"]:
-                return []
+            return strategy_funds(group, straid)
+        result = []
+        for identifier in strategies:
+            rows = strategy_funds(group, identifier)
+            if rows:
+                result.append(rows[-1])
+        return result
 
-            if "funds" not in self.__grp_cache__[grpid]:
-                self.__grp_cache__[grpid]["funds"] = dict()
-            
-            if straid not in self.__grp_cache__[grpid]["funds"]:
-                filepath = "./generated/outputs/%s/funds.csv" % (straid)
-                filepath = os.path.join(grpInfo["path"], filepath)
-                if not os.path.exists(filepath):
-                    return []
-                else:
-                    trdCache = dict()
-                    trdCache["file"] = filepath
-                    trdCache["lastrow"] = 0
-                    trdCache["funds"] = list()
-                    self.__grp_cache__[grpid]["funds"][straid] = trdCache
-
-            trdCache = self.__grp_cache__[grpid]["funds"][straid]
-
-            f = open(trdCache["file"], "r")
-            last_row = trdCache["lastrow"]
-            lines = f.readlines()
-            f.close()
-            lines = lines[1+last_row:]
-
-            for line in lines:
-                cells = line.split(",")
-                if len(cells) > 10:
-                    continue
-
-                tItem = {
-                    "strategy":straid,
-                    "date": int(cells[0]),
-                    "closeprofit": float(cells[1]),
-                    "dynprofit": float(cells[2]),
-                    "dynbalance": float(cells[3]),
-                    "fee": 0
-                }
-
-                if len(cells) > 4:
-                    tItem["fee"] = float(cells[4])
-
-                trdCache["funds"].append(tItem)
-                trdCache["lastrow"] += 1
-
-            ret = trdCache["funds"].copy()
-
-            if len(ret) > 0:
-                last_date = ret[-1]["date"]
-            else:
-                last_date = 0
-
-            # 这里再更新一条实时数据
-            filepath = "./generated/stradata/%s.json" % (straid)
-            filepath = os.path.join(grpInfo["path"], filepath)
-            f = open(filepath, "r")
-            try:
-                content = f.read()
-                json_data = json.loads(content)
-                fund = json_data["fund"]
-                if fund["tdate"] > last_date:
-                    ret.append({
-                        "strategy":straid,
-                        "date": fund["tdate"],
-                        "closeprofit": fund["total_profit"],
-                        "dynprofit": fund["total_dynprofit"],
-                        "dynbalance": fund["total_profit"] + fund["total_dynprofit"] - fund["total_fees"],
-                        "fee": fund["total_fees"]
-                    })
-            except:
-                pass
-            f.close()
-            
-            return ret
-        else:
-            ret = list()
-            for straid in self.__grp_cache__[grpid]["strategies"]:
-                filepath = "./generated/outputs/%s/funds.csv" % (straid)
-                filepath = os.path.join(grpInfo["path"], filepath)
-                f = open(filepath, "r")
-                lines = f.readlines()
-                f.close()
-
-                filepath = "./generated/stradata/%s.json" % (straid)
-                filepath = os.path.join(grpInfo["path"], filepath)
-                if not os.path.exists(filepath):
-                    continue
-
-                f = open(filepath, "r")
-                content = f.read()
-                f.close()
-                try:
-                    
-                    json_data = json.loads(content)
-                    fund = json_data["fund"]
-                    curDate = fund["tdate"]
-                    item = {
-                        "strategy":straid,
-                        "date": fund["tdate"],
-                        "closeprofit": fund["total_profit"],
-                        "dynprofit": fund["total_dynprofit"],
-                        "dynbalance": fund["total_profit"] + fund["total_dynprofit"] - fund["total_fees"],
-                        "fee": fund["total_fees"]
-                    }
-
-                    line = lines[-1]
-                    cells = line.split(",")
-                    last_date = int(cells[0])
-                    if last_date == curDate:
-                        line = lines[-1]
-                        cells = line.split(",")
-                    preprof = float(cells[1])
-                    prebalance = float(cells[3])
-                    prefee = float(cells[4])
-
-                    item['profit'] = item['closeprofit']-preprof
-                    item['thisfee'] = item['fee'] - prefee
-                    item['addition'] = item['dynbalance']-prebalance
-
-                    ret.append(item)
-                except:
-                    pass
-            return ret
+    def invalidate_strategy_signals(self, grpid:str, straid:str, reset_id:str):
+        cache = self.__grp_cache__.get(grpid)
+        if cache is None:
+            return
+        resets = cache.setdefault("signal_resets", {})
+        if resets.get(straid) == reset_id:
+            return
+        cache.get("signals", {}).pop(straid, None)
+        resets[straid] = reset_id
 
     def get_signals(self, grpid:str, straid:str, limit:int = 200):
         if grpid not in self.__config__["groups"]:
@@ -646,6 +587,9 @@ class DataMgr:
         last_row = trdCache["lastrow"]
         lines = f.readlines()
         f.close()
+        if len(lines) - 1 < last_row:
+            trdCache["signals"] = []
+            trdCache["lastrow"] = last_row = 0
         lines = lines[1+last_row:]
 
         for line in lines:
@@ -825,16 +769,8 @@ class DataMgr:
 
         trdCache = self.__grp_cache__[grpid]["corders"][chnlid]
 
-        f = open(trdCache["file"], "r",encoding="gb2312",errors="ignore")
-        last_row = trdCache["lastrow"]
-        lines = f.readlines()
-        f.close()
-        lines = lines[1+last_row:]
-
-        for line in lines:
-            cells = line.split(",")
-
-            tItem = {
+        def decode(cells):
+            return {
                 "channel":chnlid,
                 "localid":int(cells[0]),
                 "time":int(cells[2]),
@@ -847,11 +783,7 @@ class DataMgr:
                 "canceled": cells[9],
                 "remark": cells[10]
             }
-
-            trdCache["corders"].append(tItem)
-
-        trdCache["lastrow"] = last_row + len(lines)
-        return trdCache["corders"][-limit:]
+        return _channel_records(trdCache, "corders", decode, "gb2312", "ignore")[-limit:]
 
     def get_channel_trades(self, grpid:str, chnlid:str, limit:int = 200):
         if grpid not in self.__config__["groups"]:
@@ -883,16 +815,8 @@ class DataMgr:
 
         trdCache = self.__grp_cache__[grpid]["ctrades"][chnlid]
 
-        f = open(trdCache["file"], "r",encoding="gb2312")
-        last_row = trdCache["lastrow"]
-        lines = f.readlines()
-        f.close()
-        lines = lines[1+last_row:]
-
-        for line in lines:
-            cells = line.split(",")
-
-            tItem = {
+        def decode(cells):
+            return {
                 "channel":chnlid,
                 "localid":int(cells[0]),
                 "time":int(cells[2]),
@@ -903,11 +827,7 @@ class DataMgr:
                 "tradeid": cells[7],
                 "orderid": cells[8]
             }
-
-            trdCache["ctrades"].append(tItem)
-
-        trdCache["lastrow"] = last_row + len(lines)
-        return trdCache["ctrades"][-limit:]
+        return _channel_records(trdCache, "ctrades", decode, "gb2312")[-limit:]
 
     def get_channel_positions(self, grpid:str, chnlid:str):
         if self.__config__ is None:
@@ -939,7 +859,7 @@ class DataMgr:
             filepath = "./generated/traders/%s/rtdata.json" % (cid)
             filepath = os.path.join(grpInfo["path"], filepath)
             if not os.path.exists(filepath):
-                return []
+                continue
             
             f = open(filepath, "r")
             try:
@@ -1387,4 +1307,3 @@ class DataMgr:
             f.write(json.dumps(realfilters, indent=4))
         f.close()
         return True
-            

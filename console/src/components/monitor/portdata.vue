@@ -5,10 +5,10 @@
                 <div style="height:100%;display:flex;flex-direction:row;">
                     <div style="flex:0 0 auto;height:100%;">
                         <el-tabs :model-value="selCat" tab-position="top" @tab-click="handleCatChange" style="height:100%;margin:0;">
-                            <el-tab-pane label="持仓数据" name="pos">
+                            <el-tab-pane label="理论持仓" name="pos">
                             </el-tab-pane>
-                            <el-tab-pane label="成交明细" name="trd"></el-tab-pane>
-                            <el-tab-pane label="回合明细" name="rnd"></el-tab-pane>
+                            <el-tab-pane label="理论成交" name="trd"></el-tab-pane>
+                            <el-tab-pane label="理论回合" name="rnd"></el-tab-pane>
                             <el-tab-pane label="组合风控" name="rsk">
                             </el-tab-pane>
                             <el-tab-pane label="每日绩效" name="fnd" v-if="isAdmin">
@@ -32,6 +32,7 @@
                 </div>
             </el-header>
             <el-main style="overflow:auto;border-bottom:1px solid #E4E7ED;">
+                <p v-if="['pos','trd','rnd'].includes(selCat)" style="font-size:12px;line-height:1.7;color:var(--wt-muted);margin:0 0 12px;">组合引擎理论账簿。时间、价格与收益可能和实际执行不同。柜台实际成交见看盘区“成交”。</p>
                 <RecordTable v-if="selCat==='trd'" :rows="portTrades" :storage-key="'wt.data.'+groupid+'.portfolio.trades'"/>
                 <RecordTable v-if="selCat==='rnd'" :rows="portRounds" :storage-key="'wt.data.'+groupid+'.portfolio.rounds'"/>
                 <div style="height:100%;display:flex;flex-direction:row;" v-show="selCat=='pos'" v-loading="loading.position" >

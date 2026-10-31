@@ -22,6 +22,8 @@ RULE_TYPES = {
     "min_available": {"label": "新增开仓可用资金下限", "unit": "元", "max": 1e15},
     "day_loss_pct": {"label": "当日权益亏损上限", "unit": "%", "max": 100},
     "drawdown_pct": {"label": "运行期间权益回撤上限", "unit": "%", "max": 100},
+    "day_loss_amount": {"label": "当日权益亏损金额上限", "unit": "元", "max": 1e15},
+    "drawdown_amount": {"label": "运行期间权益回撤金额上限", "unit": "元", "max": 1e15},
 }
 IDENTIFIER = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\Z")
 
@@ -146,7 +148,7 @@ def validate_fast_selection(selection, engine_type):
             continue
         if rule["type"] == "min_available":
             raise ValueError("原生快速Mocker没有可用资金账簿；可用资金风控请使用Plus回测")
-        if str(engine_type).lower() == "hft" and rule["type"] in ("day_loss_pct", "drawdown_pct"):
+        if str(engine_type).lower() == "hft" and rule["type"] in ("day_loss_pct", "drawdown_pct", "day_loss_amount", "drawdown_amount"):
             raise ValueError("HFT快速Mocker没有权益接口；资金风控请使用Plus回测")
 
 

@@ -255,6 +255,9 @@ def register_managed_routes(app, data_mgr, dog, check_auth, deploy_dir):
                 row.pop("params", None)
         from .StrategyControl import runtime_rows
         runtime = runtime_rows(data_mgr, dog, groupid)["strategies"]
+        if not can_admin(info):
+            for row in runtime:
+                row.update(reset_supported=False, reset_reason="仅管理员可强制平仓并重置策略", reset_task=None)
         planned = {row["id"] for row in draft["strategies"]}
         return {"result": 0, "plan": draft, "existing_strategies": [row for row in runtime if row["id"] not in planned],
             "strategy_status": {row["id"]: row for row in runtime},

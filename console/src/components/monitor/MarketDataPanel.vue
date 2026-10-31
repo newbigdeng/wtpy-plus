@@ -24,26 +24,29 @@
     </article>
 
     <article class="market-card">
-      <div class="card-heading"><div><h3>历史行情补数</h3><p>先检查本地日期，再向所选平台申请数据。平台权限决定可取的频率和范围。</p></div><div class="history-actions"><el-button size="small" :loading="permissionsLoading" :disabled="!subscriptions?.can_manage" @click="loadProviders(true)">检查平台权限</el-button><el-button link @click="openTerminal">返回看盘</el-button></div></div>
+      <div class="card-heading"><div><h3>历史行情补数</h3><p>CNEquity 先查数据湖，缺失时采集可获取的行情，再补充到 WT。</p></div><div class="history-actions"><el-button size="small" :loading="permissionsLoading" :disabled="!subscriptions?.can_manage" @click="loadProviders(true)">检查数据源</el-button><el-button link @click="openTerminal">返回看盘</el-button></div></div>
       <el-alert v-if="historyError" :title="historyError" type="error" :closable="false" show-icon/>
       <div class="backfill-form">
         <label>数据平台<el-select v-model="provider" placeholder="选择数据平台" aria-label="补数平台" @change="providerChanged"><el-option v-for="item in providers" :key="item.id" :value="item.id" :label="item.label"/></el-select></label>
         <label>具体合约<el-select-v2 v-model="historyCode" filterable :options="historyContractOptions" placeholder="选择合约" aria-label="历史补数合约" @change="clearCoverage"/></label>
-        <label>数据频率<el-select v-model="period" aria-label="补数数据频率" @change="clearCoverage"><el-option v-for="item in periods" :key="item.value" :value="item.value" :label="item.label+(item.available===false?' · 未授权':'')"/></el-select></label>
+        <label>数据频率<el-select v-model="period" aria-label="补数数据频率" @change="clearCoverage"><el-option v-for="item in periods" :key="item.value" :value="item.value" :label="frequencyLabel(item)"/></el-select></label>
         <label class="date-field">日期范围<el-date-picker v-model="dates" type="daterange" value-format="YYYYMMDD" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" aria-label="历史补数日期范围" @change="clearCoverage"/></label>
       </div>
-      <p class="provider-note"><el-tag v-if="currentProvider?.configured" size="small" effect="plain">服务器已配置凭据</el-tag> {{ currentPeriod?.reason || currentProvider?.reason || '账户凭据由服务器保存，浏览器不读取平台密钥。' }}</p>
+      <p class="provider-note"><el-tag v-if="currentProvider?.configured" size="small" effect="plain">{{ provider==='cnequity'?'研究环境已接入':provider==='tushare'?'凭据已配置':'环境可用' }}</el-tag> {{ currentPeriod?.reason || currentProvider?.reason || '选择数据源后检查环境和数据覆盖；账号权限与历史数据是否存在分别判断。' }}</p>
       <p class="market-note">{{ backfillReason }}<span v-if="currentProvider?.max_days"> · 每次最多 {{ currentProvider.max_days }} 个自然日</span></p>
-      <p class="market-note">日线只补日线。不会把日线拼成分钟或 Tick 行情。已有数据按所选频率保留，新增记录会登记来源。</p>
+      <p class="market-note">同合约、同周期、同时间点的 WT 原记录保留，只新增缺失记录。CNEquity 五分钟由完整有效的一分钟线聚合并注明来源；不会用日线或 K 线编造 Tick。</p>
       <div class="backfill-restart"><el-checkbox v-model="allowBackfillRestart" :disabled="Boolean(subscriptions?.process_running)">允许写入时短暂停采并自动恢复（引擎须停止）</el-checkbox><p>下载时继续采集；写入 WT 历史文件前短暂停采。未勾选时，中台运行期间不能补写。</p></div>
       <div class="provider-availability"><span v-for="item in providers.filter(item=>!item.available)" :key="item.id">{{ item.label }}：{{ item.reason || '尚未接入' }}</span></div>
-      <div class="card-actions"><span class="action-note">{{ coverage?.message || '休市日不等于缺失；日期状态以交易日历和本地记录为准。' }}</span><el-button :disabled="!validHistory" :loading="checking" @click="checkCoverage">检查本地日期</el-button><el-button type="primary" :disabled="!validHistory || !currentProvider?.available || currentPeriod?.available===false || !canBackfill || Boolean(subscriptions?.process_running)" :loading="submitting" @click="startBackfill">读取并保存到云端</el-button></div>
+      <p v-if="provider==='cnequity'" class="market-note">交易运行时可以准备数据湖，不写入 WT。停止使用该数据中台的交易引擎后，可继续导入；分钟源仅有最近窗口，缺失的旧日期会明确列出。</p>
+      <div class="card-actions"><span class="action-note">{{ coverage?.message || '休市日不等于缺失；日期状态以交易日历和本地记录为准。' }}</span><el-button :disabled="!validHistory" :loading="checking" @click="checkCoverage">{{ provider==='cnequity'?'检查 WT 与数据湖':'检查本地日期' }}</el-button><el-button type="primary" :disabled="!validHistory || !currentProvider?.available || currentPeriod?.available===false || (!canBackfill && !(provider==='cnequity' && canPrepareLake))" :loading="submitting" @click="startBackfill">{{ provider==='cnequity' && subscriptions?.process_running?'准备到数据湖':'读取并补充到 WT' }}</el-button></div>
       <div v-if="coverage" class="coverage-result" aria-live="polite">
-        <div class="coverage-heading"><strong>本地数据情况</strong><span>{{ coverage.storage || '' }}</span></div>
+        <div class="coverage-heading"><strong>{{ provider==='cnequity'?'WT 与数据湖覆盖':'本地数据情况' }}</strong><span>{{ coverage.storage || '' }}</span></div>
         <el-table :data="coverage.dates || []" max-height="280" size="small" empty-text="此范围内没有可展示的本地记录">
           <el-table-column label="日期" min-width="110"><template #default="{row}">{{ formatDate(row.date) }}</template></el-table-column>
           <el-table-column label="状态" min-width="110"><template #default="{row}"><el-tag size="small" effect="plain" :type="['missing','partial'].includes(row.status)?'warning':row.status==='present'?'success':'info'">{{ coverageLabel(row.status) }}</el-tag></template></el-table-column>
-          <el-table-column prop="rows" label="本地记录数" min-width="100"/>
+          <el-table-column prop="rows" label="WT 记录数" min-width="100"/>
+          <el-table-column v-if="provider==='cnequity'" prop="lake_rows" label="数据湖记录数" min-width="115"/>
+          <el-table-column v-if="provider==='cnequity'" label="数据湖状态" min-width="120"><template #default="{row}">{{ coverageLabel(row.lake_status) }}</template></el-table-column>
           <el-table-column prop="source" label="数据来源" min-width="160"/>
         </el-table>
       </div>
@@ -56,9 +59,10 @@
         <el-table-column prop="code" label="合约" min-width="145"/>
         <el-table-column label="来源 / 频率" min-width="140"><template #default="{row}">{{ providerLabel(row.provider) }} · {{ periodLabel(row.period) }}</template></el-table-column>
         <el-table-column label="申请日期" min-width="185"><template #default="{row}">{{ formatDate(row.start_date) }} — {{ formatDate(row.end_date) }}</template></el-table-column>
-        <el-table-column label="状态" min-width="95"><template #default="{row}"><el-tag size="small" :type="jobType(row.status)">{{ jobLabel(row.status) }}</el-tag></template></el-table-column>
-        <el-table-column label="保存记录" width="100"><template #default="{row}">{{ row.rows ?? '—' }}</template></el-table-column>
-        <el-table-column label="说明" min-width="220"><template #default="{row}"><span :class="{'task-error':row.status==='failed'}">{{ row.error || row.message || '—' }}</span></template></el-table-column>
+        <el-table-column label="状态" min-width="105"><template #default="{row}"><el-tag size="small" :type="jobType(row)">{{ jobLabel(row) }}</el-tag></template></el-table-column>
+        <el-table-column label="WT 新增" width="100"><template #default="{row}">{{ row.rows ?? '—' }}</template></el-table-column>
+        <el-table-column label="说明" min-width="220"><template #default="{row}"><span :class="{'task-error':row.status==='failed'}">{{ row.error || row.message || '—' }}</span><small v-if="row.lake">数据湖返回 {{row.lake.rows||0}} 条；WT 已有跳过 {{row.already_present_rows??Math.max(0,(row.received_rows||0)-(row.rows||0))}} 条。<template v-if="row.lake.missing_dates?.length">仍有 {{row.lake.missing_dates.length}} 个交易日缺失或不完整。</template></small></template></el-table-column>
+        <el-table-column label="操作" width="130"><template #default="{row}"><el-button v-if="row.status==='ready'" size="small" :disabled="Boolean(subscriptions?.process_running) || !canBackfill" @click="importPrepared(row)">继续导入 WT</el-button></template></el-table-column>
       </el-table>
     </article>
 
@@ -84,7 +88,7 @@ export default {
     subscriptions: null, selected: [], exchange: '', product: '', subscriptionError: '', loading: false,
     preview: null, previewing: false, showPreview: false, restartCollector: false, saving: false, catalogRefreshing: false,
     providers: [], provider: '', permissionsLoading: false, historyCode: '', period: 'd', dates: [dayString(Date.now() - 7 * 86400000), dayString(Date.now())],
-    canBackfill: false, backfillReason: '', allowBackfillRestart: false, historyError: '', coverage: null, checking: false, submitting: false,
+    canBackfill: false, canPrepareLake: false, backfillReason: '', allowBackfillRestart: false, historyError: '', coverage: null, checking: false, submitting: false,
     jobs: [], jobsError: '', jobsLoading: false, poll: null, disposed: false
   }),
   computed: {
@@ -163,6 +167,7 @@ export default {
         if (this.disposed) return;
         this.providers = result.providers || [];
         this.canBackfill = Boolean(result.can_backfill);
+        this.canPrepareLake = Boolean(result.can_prepare_lake);
         this.backfillReason = result.reason || '';
         if (!this.provider) this.provider = this.providers.find(item => item.available)?.id || this.providers[0]?.id || '';
         this.providerChanged();
@@ -175,6 +180,7 @@ export default {
       this.clearCoverage();
     },
     clearCoverage() { this.coverage = null; },
+    frequencyLabel(item) { const state=item.state||this.currentProvider?.state;const label=({not_configured:'未配置',not_connected:'未接入',unsupported:'不支持'})[state]||(this.provider==='tushare'?(this.currentProvider?.configured?'待检查权限':'未配置凭据'):'不可用');return item.label+(item.available===false?' · '+label:''); },
     historyRequest() { return { provider: this.provider, code: this.historyCode, period: this.period, start_date: this.dates[0], end_date: this.dates[1] }; },
     async checkCoverage() {
       this.checking = true;
@@ -193,6 +199,12 @@ export default {
       } catch (error) { this.historyError = error.message; }
       finally { this.submitting = false; }
     },
+    async importPrepared(job) {
+      this.submitting = true;this.historyError='';
+      try { await this.request('backfill',{provider:job.provider,code:job.code,period:job.period,start_date:job.start_date,end_date:job.end_date,restart_collector:this.allowBackfillRestart});await this.loadJobs(); }
+      catch(error){this.historyError=error.message;}
+      finally{this.submitting=false;}
+    },
     async loadJobs() {
       clearTimeout(this.poll);
       this.jobsLoading = true;
@@ -210,9 +222,10 @@ export default {
     },
     formatDate(value) { const day = String(value || ''); return day.length === 8 ? day.slice(0, 4) + '-' + day.slice(4, 6) + '-' + day.slice(6) : day || '—'; },
     formatTime(value) { return new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }); },
-    coverageLabel(value) { return ({ present: '已有数据', missing: '交易日缺失', closed: '休市', not_listed: '未上市 / 已到期', partial: '部分数据', unknown: '无记录，待确认' })[value] || value; },
-    jobLabel(value) { return ({ queued: '排队中', running: '读取中', completed: '已完成', failed: '失败' })[value] || value; },
-    jobType(value) { return ({ queued: 'info', running: 'warning', completed: 'success', failed: 'danger' })[value] || 'info'; },
+    coverageLabel(value) { return ({ present: '已有数据', missing: '交易日缺失', closed: '休市', not_listed: '未上市 / 已到期', partial: '部分数据', unknown: '无记录，待确认' })[value] || value || '尚未检查'; },
+    jobIncomplete(job) { return job.status==='completed'&&Boolean(job.lake?.missing_dates?.length||job.lake?.warnings?.length); },
+    jobLabel(job) { return this.jobIncomplete(job)?'部分完成':({ queued: '排队中', running: '读取中', ready:'湖已准备', completed: '已完成', failed: '失败' })[job.status] || job.status; },
+    jobType(job) { return this.jobIncomplete(job)?'warning':({ queued: 'info', running: 'warning', completed: 'success', failed: 'danger' })[job.status] || 'info'; },
     providerLabel(value) { return this.providers.find(item => item.id === value)?.label || value; },
     periodLabel(value) { return ({ d: '日线', m1: '1 分钟', m5: '5 分钟', tick: 'Tick' })[value] || value; },
     openTerminal() { this.$router.replace({ query: { ...this.$route.query, tab: 'terminal' } }); }
