@@ -4,7 +4,7 @@
             <button class="wt-brand" aria-label="展开或收起导航" :aria-expanded="railExpanded" @click="toggleRail"><img src="@/assets/wt-mark.svg" alt=""/></button><span v-if="railExpanded" class="wt-brand-name">WonderTrader</span>
             <nav class="wt-rail-nav">
                 <el-tooltip v-for="item in navItems" :key="item.path" :content="item.label" placement="right" :enterable="false">
-                    <router-link :to="assetLink(item.path)" class="wt-rail-link" :class="{active:$route.path===item.path}" :aria-label="item.label" :aria-current="$route.path===item.path?'page':undefined">
+                    <router-link :to="assetLink(item.path)" class="wt-rail-link" :class="{active:sectionPath===item.path}" :aria-label="item.label" :aria-current="sectionPath===item.path?'page':undefined">
                         <WtIcon :name="item.icon"/><span class="wt-rail-label">{{item.label}}</span>
                     </router-link>
                 </el-tooltip>
@@ -27,7 +27,7 @@
 </div>
             </header>
             <nav v-if="isAssetPage" class="wt-asset-nav" aria-label="资产类别">
-                <router-link v-for="(label,key) in assetNames" :key="key" :to="{path:$route.path,query:{group:$route.query.group,asset:key}}" :aria-current="asset===key?'page':undefined">{{label}}</router-link>
+                <router-link v-for="(label,key) in assetNames" :key="key" :to="{path:$route.name==='run-report'?'/backtest/reports':$route.path,query:{group:$route.query.group,asset:key}}" :aria-current="asset===key?'page':undefined">{{label}}</router-link>
                 <template v-if="$route.path==='/monitor' && asset==='futures'">
                     <router-link :to="{path:'/monitor',query:{asset}}" :aria-current="!externalQuotes?'page':undefined">组合监控</router-link>
                     <router-link :to="{path:'/monitor',query:{asset,view:'quote'}}" :aria-current="externalQuotes?'page':undefined">按需看盘</router-link>
@@ -35,7 +35,7 @@
             </nav>
             <main class="wt-workspace" :class="'workspace-'+$route.path.slice(1)">
                 <AssetQuote v-if="externalQuotes" :key="asset" :asset="asset"/>
-                <AssetResearch v-else-if="asset!=='futures' && ['/backtest','/history'].includes($route.path)" :key="$route.path+asset" :asset="asset" :name="assetNames[asset]" :backtest="$route.path==='/backtest'"/>
+                <AssetResearch v-else-if="asset!=='futures' && $route.path==='/history'" :key="asset" :asset="asset" :name="assetNames[asset]"/>
                 <router-view v-else :key="isAssetPage?asset:undefined" @notify="handleNotify"/>
             </main>
             <footer class="wt-statusbar"><strong>WT / TERMINAL</strong><span>{{roleName}}</span><span>行情、研究与交易状态独立核对</span><time>{{terminalClock}} CST</time></footer>
@@ -108,7 +108,8 @@ import { useSessionStore } from '@/store.js';
 export default {
     name: 'index',
     computed: {
-        isAssetPage(){return ['/monitor','/backtest','/history','/strategies'].includes(this.$route.path)},
+        sectionPath(){return this.$route.matched.some(r=>r.name==='backtest')?'/backtest':this.$route.path},
+        isAssetPage(){return ['/monitor','/backtest','/history','/strategies'].includes(this.sectionPath)},
         asset(){return Object.hasOwn(this.assetNames,this.$route.query.asset)?this.$route.query.asset:'futures'},
         externalQuotes(){return this.$route.path==='/monitor' && (this.asset!=='futures'||this.$route.query.view==='quote')},
         commandPages(){return this.navItems.filter(item=>item.label.includes(this.commandQuery))},
@@ -129,7 +130,7 @@ export default {
                 {path:'/risk-library',icon:'settings',label:'风控管理',hint:'可组合的风控规则',show:true},
             ].filter(item=>item.show)
         },
-        currentPage() { return this.navItems.find(item=>item.path===this.$route.path) || (this.$route.path==='/admins'?{label:'用户管理',hint:'账户与访问权限'}:null) || (this.$route.path==='/api-manual'?{label:'API 手册',hint:'当前版本 Python 策略接口'}:{label:'工作台',hint:''}) },
+        currentPage() { return this.navItems.find(item=>item.path===this.sectionPath) || (this.$route.path==='/admins'?{label:'用户管理',hint:'账户与访问权限'}:null) || (this.$route.path==='/api-manual'?{label:'API 手册',hint:'当前版本 Python 策略接口'}:{label:'工作台',hint:''}) },
         pushConnected() { return pushState.connected },
         ...mapState(useSessionStore, [
             'cache'

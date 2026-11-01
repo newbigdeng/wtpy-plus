@@ -1,10 +1,10 @@
 <template>
-  <details @toggle="opened">
-    <summary>跨到期日回测 · 移仓、行权与指派</summary>
+  <section class="expiry">
+    <h3>跨到期日回测 · 移仓、行权与指派</h3>
     <p>按历史日线回放。自动移仓在指定交易日按两腿开盘价模拟；
       到期按标的期货结算价判断实值。权利金、费用和期货盯市分别记账。</p>
     <p v-if="!packs.length">{{message || '期权工作区还没有跨期日线样本。'}}</p>
-    <form v-else @submit.prevent="submit">
+    <form v-else-if="pack" @submit.prevent="submit">
       <label>历史样本<select v-model="sample"><option v-for="p in packs" :key="p.id" :value="p.id">{{p.id}} · {{p.start}}—{{p.end}}</option></select></label>
       <label>旧合约<select v-model="old"><option v-for="c in pack.contracts" :key="c.code">{{c.code}}</option></select></label>
       <label>移至合约<select v-model="next"><option v-for="c in successors" :key="c.code">{{c.code}}</option></select></label>
@@ -37,10 +37,10 @@
         <tbody><tr v-for="d in report.daily" :key="d.day"><td>{{d.day}}</td><td>{{positions(d.options)}}</td><td>{{positions(d.futures)}}</td>
         <td v-for="k in ['cash','option_value','equity','margin','available']" :key="k">{{d[k]}}</td></tr></tbody></table>
     </section>
-  </details>
+  </section>
 </template>
 <script setup>
-import {computed,ref,watch} from 'vue'
+import {computed,onMounted,ref,watch} from 'vue'
 const props=defineProps({api:Function,runs:Array})
 const packs=ref([]),ids=ref([]),sample=ref(''),old=ref(''),next=ref(''),task=ref(''),saved=ref('')
 const lots=ref(2),roll=ref(1),before=ref(1),capital=ref(100000),fee=ref(1),exfee=ref(1),margin=ref(10)
@@ -50,8 +50,9 @@ const successors=computed(()=>pack.value?.contracts.filter(c=>c.expiry>pack.valu
 const completed=computed(()=>props.runs.filter(r=>r.strategy_type==='cta' && r.status==='completed'))
 watch(sample,()=>{old.value=pack.value?.contracts[0]?.code || '';report.value=null;declarations.value=[]})
 watch([old,successors],()=>{if(!successors.value.some(c=>c.code===next.value))next.value=successors.value[0]?.code || ''})
-async function opened(e){if(!e.target.open)return
-  try{const d=await props.api('expiry-catalog');packs.value=d.samples;ids.value=d.runs;sample.value ||= packs.value[0]?.id || ''}catch(e){message.value=e.message}}
+onMounted(async()=>{
+  try{const d=await props.api('expiry-catalog');packs.value=d.samples;ids.value=d.runs;sample.value=packs.value[0]?.id || ''}catch(e){message.value=e.message}
+})
 function positions(v){return Object.entries(v).map(([k,n])=>k+'：'+n).join('；') || '空仓'}
 async function restore(){if(saved.value)try{report.value=(await props.api('expiry-detail',{run:saved.value})).report}catch(e){message.value=e.message}}
 async function submit(){
@@ -64,4 +65,4 @@ async function submit(){
   }catch(e){message.value=e.message}finally{busy.value=false}
 }
 </script>
-<style scoped>summary{cursor:pointer;font-weight:600}details{margin:16px 0;overflow:auto}form{display:flex;flex-wrap:wrap;gap:12px;align-items:end}label{display:grid;gap:4px}th,td{padding:6px;text-align:left}fieldset{width:100%}button,input,select{padding:5px}</style>
+<style scoped>.expiry{margin:16px 0;overflow:auto}form{display:flex;flex-wrap:wrap;gap:12px;align-items:end}label{display:grid;gap:4px}th,td{padding:6px;text-align:left}fieldset{width:100%}button,input,select{padding:5px}</style>

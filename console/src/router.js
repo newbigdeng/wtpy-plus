@@ -7,7 +7,7 @@ import Login from '@/components/login.vue'
 const Index=()=>import('@/components/index.vue')
 const Monitor=()=>import('@/components/monitor/main.vue')
 
-const Backtest=()=>import('@/components/backtest/main.vue')
+const Backtest=()=>import('@/components/backtest/BacktestWorkspace.vue')
 const Schedule=()=>import('@/components/schedule/main.vue')
 const Admins=()=>import('@/components/admins/main.vue')
 const ApiManual=()=>import('@/components/backtest/ApiManual.vue')
@@ -39,8 +39,10 @@ const router=createRouter({
             children: [
                 {path: '/monitor', name:"monitor", component: Monitor},
                 {path:'/deploy',redirect:'/monitor'},
-                {path: '/backtest', name:"backtest", component: Backtest},
-                {path:'/backtest/report',name:'run-report',component:()=>import('@/components/backtest/RunReport.vue')},
+                {path:'/backtest',name:'backtest',component:Backtest,children:[
+                    {path:'reports',name:'backtest-reports',component:()=>import('@/components/backtest/ReportShelf.vue')},
+                    {path:'report',name:'run-report',component:()=>import('@/components/backtest/RunReport.vue')},
+                ]},
                 {path: '/strategies', name:"strategies", component: StrategyLibrary},
                 {path: '/history', name:"history", component: HistoryManager},
                 {path:'/terminal',name:'terminal',component:TerminalWorkspace},
@@ -66,7 +68,7 @@ router.beforeEach(async to=>{
  const role=session.cache.userinfo.role
  if(role==='guest')return true
  if(to.path==='/admins'&&!['admin','superman'].includes(role))return '/monitor'
- if(['/backtest','/backtest/report'].includes(to.path)&&!['researcher','admin','superman'].includes(role))return '/monitor'
+ if(to.matched.some(r=>r.name==='backtest')&&!['researcher','admin','superman'].includes(role))return '/monitor'
  if(['/research','/terminal'].includes(to.path)&&!['researcher','admin','superman'].includes(role))return '/monitor'
  if(to.path==='/schedule'&&to.query.tab!=='subscriptions'&&!['admin','superman'].includes(role))return '/monitor'
  return true

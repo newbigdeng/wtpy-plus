@@ -1,5 +1,5 @@
 <template><article class="run-report">
-  <router-link :to="mode==='research'?'/research':{path:'/backtest',query:{asset}}">← {{mode==='research'?'研究工作台':'回测列表'}}</router-link>
+  <router-link :to="{name:'backtest-reports',query:{asset,mode,strategy:route.query.strategy}}">← 回测报告列表</router-link>
   <header><div><small>{{assetName}} / {{modeName}}</small><h1>回测统计报告</h1><p>{{strategyName}} · {{task}}</p></div><button @click="load" :disabled="busy">刷新报告</button></header>
   <p v-if="busy || error" role="status">{{error || '正在读取任务流水…'}}</p>
   <template v-if="report"><p>任务状态 {{statusLabel}} <span v-if="report.error"> · {{report.error}}</span></p>
