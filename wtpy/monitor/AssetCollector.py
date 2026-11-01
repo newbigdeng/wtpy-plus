@@ -63,7 +63,7 @@ def main():
             atomic_json(inside(root, "datahub", "catalog.json"),
                         {k:config[k] for k in ("writer", "basefiles")})
             engine = WtDtEngine()
-            engine.init_with_config(config, {"root":{"level":"info","sinks":[{"type":"console_sink"}]}})
+            engine.init_with_config(config, {"root":{"level":"info","sinks":[{"type":"console_sink","pattern":"%v"}]}})
             engine.run(False)
 
 

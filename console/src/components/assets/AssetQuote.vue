@@ -2,6 +2,9 @@
   <section class="asset-quote">
     <h2>{{ names[asset] }}行情</h2>
     <form @submit.prevent="view">
+      <label v-if="asset==='option'||asset==='futures'">行情环境
+        <select v-model="mode" @change="symbol && view()"><option value="session">交易时段行情</option><option value="simulation">7×24 仿真回放</option></select>
+      </label>
       <label>交易所代码 <input v-model.trim="draft" :placeholder="examples[asset]" required maxlength="42"></label>
       <button>查看行情</button><button v-if="symbol" type="button" @click="stop">停止</button>
     </form>
@@ -20,7 +23,7 @@ const props=defineProps({asset:{type:String,required:true}})
 const examples={stock:'SSE.600000',futures:'SHFE.rb2701',option:'DCE.m2701-C-3000',crypto:'BTC-USD'}
 const names={stock:'股票',futures:'期货',option:'商品期权',crypto:'加密货币'}
 const fields=[['last','最新成交'],['bid','买一'],['ask','卖一'],['time','源端行情时间'],['trading_day','交易日'],['source','行情源']]
-const draft=ref(''), symbol=ref(''), quote=ref(null), status=ref('')
+const mode=ref('session'),draft=ref(''), symbol=ref(''), quote=ref(null), status=ref('')
 let request, timer
 function cancel(){
   clearTimeout(timer)
@@ -39,7 +42,7 @@ async function refresh(){
   status.value='正在连接行情源…'
   try{
     const response=await fetch('/mgr/assets/'+props.asset+'/quote',{method:'POST',credentials:'same-origin',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:symbol.value}),signal:controller.signal})
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:symbol.value,mode:mode.value}),signal:controller.signal})
     if(response.headers.get('content-type')?.includes('ndjson')){
       const reader=response.body.pipeThrough(new TextDecoderStream()).getReader()
       let buffer=''
@@ -89,7 +92,7 @@ onBeforeUnmount(()=>{cancel();document.removeEventListener('visibilitychange',vi
 <style scoped>
 .asset-quote{padding:18px 22px;overflow:auto;color:var(--wt-text)}
 h2{font-size:19px;margin:0 0 16px}form,dl{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-input,button{background:var(--wt-surface);color:inherit;border:1px solid var(--wt-line);padding:7px 10px;border-radius:4px}button{cursor:pointer}
+input,button,select{background:var(--wt-surface);color:inherit;border:1px solid var(--wt-line);padding:7px 10px;border-radius:4px}button{cursor:pointer}
 .hint,dt{color:var(--wt-muted);font-size:12px}dd{margin:5px 0;font-variant-numeric:tabular-nums}
 dl>div{padding:10px 15px;border-left:2px solid var(--wt-line)}
 </style>

@@ -29,3 +29,19 @@ test('switching instrument, asset and page stops previous quote polling',async({
   await page.getByRole('link',{name:'策略管理',exact:true}).click()
   await expect.poll(()=>calls.filter(([path])=>path==='/mgr/assets/option/strategy_library').length).toBe(2)
 })
+
+test('the selected CTP environment is explicit on the request', async({page})=>{
+  await page.route('**/mgr/session',r=>r.fulfill({json:{result:0,userinfo:{loginid:'tester',role:'admin'}}}))
+  await page.routeWebSocket(/.*/,socket=>socket.onMessage(()=>{}))
+  const modes=[]
+  await page.route('**/mgr/assets/option/quote',r=>{
+    modes.push(r.request().postDataJSON().mode)
+    return r.fulfill({json:{result:0,quote:{source:'CTP',last:20}}})
+  })
+  await page.goto('/#/monitor?asset=option')
+  await page.getByPlaceholder('DCE.m2701-C-3000').fill('DCE.m2701-C-3000')
+  await page.getByRole('button',{name:'查看行情'}).click()
+  await expect.poll(()=>modes).toEqual(['session'])
+  await page.getByLabel('行情环境').selectOption('simulation')
+  await expect.poll(()=>modes).toEqual(['session','simulation'])
+})

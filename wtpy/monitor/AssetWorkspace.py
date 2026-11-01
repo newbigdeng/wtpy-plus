@@ -31,14 +31,14 @@ def asset_catalog(root, asset):
     return dataset_entries(root, profiles_by_group={asset: [profile]}, asset=asset)
 
 
-async def ctp_quotes(root, exchange, ticker):
+async def ctp_quotes(root, exchange, ticker, mode):
     # Each native API owns its flow files. Separate directories also isolate concurrent tabs.
     flows = inside(root, "quotes")
     flows.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=flows) as folder:
         python = os.environ.get("WT_QUOTE_CTP_PYTHON") or sys.executable
         process = await asyncio.create_subprocess_exec(python, "-u",
-            str(Path(__file__).with_name("AssetCtpQuote.py")), exchange, ticker, cwd=folder,
+            str(Path(__file__).with_name("AssetCtpQuote.py")), exchange, ticker, mode, cwd=folder,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         try:
             while True:
@@ -85,7 +85,8 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
         return user, None
 
     @app.post("/mgr/assets/{asset}/quote")
-    async def quote(request: Request, asset: str, symbol: str = Body(..., embed=True)):
+    async def quote(request: Request, asset: str, symbol: str = Body(..., embed=True),
+                    mode: str = Body("session", embed=True)):
         _, error = await asyncio.to_thread(authorize, request, asset)
         if error:
             return error
@@ -96,6 +97,8 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
             if asset in ("stock", "crypto"):
                 value = await asyncio.to_thread(http_quote, asset, symbol)
                 return {"result": 0, "quote": value}
+            if mode not in ("session", "simulation"):
+                raise ValueError("未知的 CTP 行情环境")
             if not os.environ.get("WT_QUOTE_CTP_PYTHON") and find_spec("openctp_ctp") is None:
                 raise ValueError("看盘服务缺少 openctp-ctp 行情 SDK")
         except (ValueError, OSError, KeyError) as exc:
@@ -103,7 +106,8 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
             return {"result": -2, "message": message}
 
         async def stream():
-            stream = ctp_quotes(asset_root(deploy, asset), exchange, ticker)
+            stream = ctp_quotes(asset_root(deploy, asset), exchange, ticker, mode)
+            yield json.dumps({"status": "已请求交易时段前置，等待行情" if mode=="session" else "已请求 SimNow 仿真前置，等待行情"}) + "\n"
             async with aclosing(stream):
                 async for event in stream:
                     yield json.dumps(event, ensure_ascii=True) + "\n"

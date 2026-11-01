@@ -5,7 +5,8 @@ import sys
 
 from openctp_ctp import thostmduserapi as md
 
-SIMNOW_MD = "tcp://182.254.243.31:40011"
+SESSION_MD = "tcp://182.254.243.31:30013"
+SIMULATION_MD = "tcp://182.254.243.31:40011"
 
 
 def emit(**values):
@@ -17,15 +18,16 @@ def number(value):
 
 
 class QuoteSpi(md.CThostFtdcMdSpi):
-    def __init__(self, api, exchange, ticker):
+    def __init__(self, api, exchange, ticker, mode):
         super().__init__()
-        self.api, self.exchange, self.ticker = api, exchange, ticker
+        self.api, self.exchange, self.ticker, self.mode = api, exchange, ticker, mode
 
     def OnFrontConnected(self):
         request = md.CThostFtdcReqUserLoginField()
-        request.BrokerID = os.getenv("WT_QUOTE_CTP_BROKER", "")
-        request.UserID = os.getenv("WT_QUOTE_CTP_USER", "")
-        request.Password = os.getenv("WT_QUOTE_CTP_PASSWORD", "")
+        if self.mode == "session" and os.environ.get("WT_QUOTE_CTP_FRONT"):
+            request.BrokerID = os.getenv("WT_QUOTE_CTP_BROKER", "")
+            request.UserID = os.getenv("WT_QUOTE_CTP_USER", "")
+            request.Password = os.getenv("WT_QUOTE_CTP_PASSWORD", "")
         if self.api.ReqUserLogin(request, 1):
             emit(error="CTP 行情登录请求失败")
 
@@ -47,7 +49,7 @@ class QuoteSpi(md.CThostFtdcMdSpi):
     def OnRtnDepthMarketData(self, tick):
         if tick.InstrumentID != self.ticker or (tick.ExchangeID and tick.ExchangeID != self.exchange):
             return
-        source = "SimNow 仿真行情" if os.environ.get("WT_QUOTE_CTP_FRONT", SIMNOW_MD) == SIMNOW_MD else "CTP"
+        source = "SimNow 7×24 仿真回放" if self.mode == "simulation" else "CTP 交易时段前置"
         emit(source=source, last=number(tick.LastPrice), bid=number(tick.BidPrice1),
              ask=number(tick.AskPrice1), bid_size=tick.BidVolume1, ask_size=tick.AskVolume1,
              time=(tick.ActionDay + " " + tick.UpdateTime + ".%03d" % tick.UpdateMillisec).strip(),
@@ -56,10 +58,10 @@ class QuoteSpi(md.CThostFtdcMdSpi):
 
 def main():
     api = md.CThostFtdcMdApi.CreateFtdcMdApi()
-    exchange, ticker = sys.argv[1:]
-    spi = QuoteSpi(api, exchange, ticker)
+    exchange, ticker, mode = sys.argv[1:]
+    spi = QuoteSpi(api, exchange, ticker, mode)
     api.RegisterSpi(spi)
-    api.RegisterFront(os.environ.get("WT_QUOTE_CTP_FRONT", SIMNOW_MD))
+    api.RegisterFront(SIMULATION_MD if mode=="simulation" else os.environ.get("WT_QUOTE_CTP_FRONT", SESSION_MD))
     api.Init()
     try:
         # The monitor closes stdin on disconnect or symbol change.
