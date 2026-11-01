@@ -1,5 +1,9 @@
 <template>
- <div class="scheduler-workspace">
+ <div v-if="subscriptionsTab" class="scheduler-subscriptions">
+  <router-link v-if="canViewScheduler" to="/schedule">← 调度列表</router-link>
+  <SubscriptionCenter/>
+ </div>
+ <div v-else class="scheduler-workspace">
   <section class="scheduler-list">
    <div class="scheduler-toolbar"><el-tabs v-model="selCat" @tab-change="value=>value==='logs'&&queryLogs()"><el-tab-pane label="调度列表" name="list"/><el-tab-pane label="调度日志" name="logs"/></el-tabs><el-button @click="queryData()">刷新</el-button><el-button @click="handleAppCommand('add')">添加应用</el-button><el-button :disabled="!curMonCfg.id" @click="handleAppCommand('del')">删除</el-button></div>
    <textarea v-if="selCat==='logs'" readonly ref="logs" aria-label="调度日志" class="scheduler-logs" :value="logs" v-loading="logOnway"/>
@@ -8,10 +12,11 @@
     <el-table-column label="状态" width="90"><template #default="{row}"><span :class="row.running?'text-success':'text-muted'">{{row.running?'运行中':'已停止'}}</span></template></el-table-column>
     <el-table-column prop="guardstr" label="守护" width="60"/><el-table-column prop="task" label="定时" width="60"/>
     <el-table-column prop="path" label="执行程序" min-width="200" show-overflow-tooltip/><el-table-column prop="param" label="参数" min-width="170" show-overflow-tooltip/><el-table-column prop="folder" label="工作目录" min-width="200" show-overflow-tooltip/>
+    <el-table-column label="采集订阅" width="112"><template #default="{row}"><router-link v-if="/(?:^|[\\/\s])run_datahub\.py(?:\s|$)/.test(row.param || '')" :to="{path:'/schedule',query:{tab:'subscriptions',hub:row.id}}">选择标的</router-link></template></el-table-column>
     <el-table-column label="进程操作" width="128" fixed="right"><template #default="{row}"><ProcessControl :id="row.id" :running="row.running" :show-state="false" @changed="queryData"/></template></el-table-column>
    </el-table>
    <template v-if="selCat==='list' && !guest">
-    <AssetDatahub asset="option" title="商品期权"/><AssetDatahub asset="crypto" title="加密货币"/>
+    <nav class="hub-links"><strong>数据中台订阅</strong><router-link v-for="(name,key) in hubNames" :key="key" :to="{path:'/schedule',query:{tab:'subscriptions',asset:key}}">{{name}} · 选择标的</router-link></nav>
    </template>
   </section>
   <aside class="scheduler-config"><MoniforCfg :config="curMonCfg" :fixinfo="!addApp" :forapp="curMonCfg.type==0" @cfgudt="onCfgUpdated"/></aside>
@@ -22,16 +27,21 @@
 import {useSessionStore} from "@/store.js";
 import MoniforCfg from '../common/moncfg.vue'
 import ProcessControl from '../common/ProcessControl.vue'
-import AssetDatahub from './AssetDatahub.vue'
+import SubscriptionCenter from './SubscriptionCenter.vue'
 export default {
     name: 'Schedule',
     components: {
-        MoniforCfg,ProcessControl,AssetDatahub
+        MoniforCfg,ProcessControl,SubscriptionCenter
     },
-    computed:{guest(){return useSessionStore().cache.userinfo?.role==='guest'}},
+    computed:{
+        guest(){return useSessionStore().cache.userinfo?.role==='guest'},
+        subscriptionsTab(){return this.$route.query.tab==='subscriptions'},
+        canViewScheduler(){return this.guest || ['admin','superman'].includes(useSessionStore().cache.userinfo?.role)}
+    },
     data() {
         return {
             selCat:"list",
+            hubNames:{futures:'期货',option:'商品期权',crypto:'加密货币'},
             showfolders:false,
             selfolder:"",
             loading: false,
@@ -235,13 +245,12 @@ export default {
             }
         }
     },
-    mounted (){
-        this.$nextTick(()=>{
-            this.queryData();
-            this.queryLogs();
-        });
+    watch:{subscriptionsTab:{immediate:true,handler(open){
+        clearInterval(this.poll);
+        if(open || !this.canViewScheduler)return;
+        this.queryData();this.queryLogs();
         this.poll=setInterval(()=>{if(!document.hidden && !this.processBusy)this.queryData(true)},5000);
-    },
+    }}},
     beforeUnmount(){clearInterval(this.poll);}
 }
 
@@ -249,5 +258,6 @@ export default {
 
 <!-- Add "scoped" attribute to limit CSS to this component only -->
 <style scoped>
+.scheduler-subscriptions{height:100%;overflow:auto;padding:12px}.hub-links{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .scheduler-workspace{height:100%;min-height:650px;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(380px,1fr);overflow:auto}.scheduler-list{min-width:0;padding:12px 16px;display:flex;flex-direction:column;gap:12px}.scheduler-list>.el-table{flex:1;min-height:350px}.scheduler-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.scheduler-toolbar>.el-tabs{margin-right:auto}.scheduler-toolbar :deep(.el-tabs__header){margin:0}.scheduler-toolbar :deep(.el-tabs__content){display:none}.scheduler-config{border-left:1px solid var(--wt-line);overflow:auto}.scheduler-logs{flex:1;min-height:400px;resize:none;background:var(--wt-matte);color:var(--wt-text);border:1px solid var(--wt-line);padding:12px;font:11px/1.8 var(--wt-mono)}@media(max-width:1280px){.scheduler-workspace{grid-template-columns:minmax(0,1fr);height:auto}.scheduler-config{border:0;border-top:1px solid var(--wt-line)}.scheduler-list{min-height:440px}}
 </style>

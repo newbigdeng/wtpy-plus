@@ -134,6 +134,37 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
         return {"result": 0, "chains": subscription_chains(asset_root(deploy, "option"), snapshot),
                 "profile": snapshot["profile_label"]}
 
+    @app.post("/mgr/assets/futures/deferred")
+    def deferred(request: Request, groupid: str = Body(...), profileid: str = Body(...),
+                 action: str = Body("status"), contracts: list[str] = Body(default=[]), revision: int = Body(0),
+                 base: list[str] = Body(default=[])):
+        user, error = authorize(request, "futures")
+        if error:
+            return error
+        from . import DeferredSubscriptions
+        from .ResearchServer import monitor_json, upstream_headers
+        snapshot = monitor_json(os.getenv("WT_MONITOR_UPSTREAM", "http://127.0.0.1:8100"),
+                                "/mgr/market/subscriptions", dict(groupid=groupid, profileid=profileid), upstream_headers(request))
+        if snapshot.get("result") != 0:
+            return {"result": -2, "message": snapshot.get("message") or "无法读取所选中台"}
+        folder = inside(asset_root(deploy,"futures"),"deferred",snapshot["datahub_id"])
+        configured = snapshot["datahub_id"] in os.getenv("WT_DEFERRED_HUBS","").split(",") and folder.is_dir()
+        editable = configured and not snapshot["datahub_running"] and snapshot["current_profile"] != profileid
+        if action == "status":
+            return {"result": 0, "editable": editable, **(DeferredSubscriptions.state(folder) if configured else {})}
+        if not configured or not snapshot["can_manage"] or action not in ("save", "cancel"):
+            return {"result": -403, "message": "无权设置此中台的待生效订阅"}
+        if action == "save" and not editable:
+            return {"result": -2, "message": "只有已停止的非当前环境可以保存待生效订阅，请刷新"}
+        if action == "save" and sorted(base) != sorted(snapshot["selected"]):
+            return {"result": -2, "message": "原订阅已变更，请刷新并重新预览"}
+        try:
+            result = DeferredSubscriptions.set_plan(folder,snapshot,action,contracts,revision)
+            data_mgr.log_action(user, "deferred_"+action, snapshot["datahub_id"])
+            return {"result": 0, **result, "message": "下次启动采用所选订阅" if action=="save" else "已取消待生效订阅"}
+        except (OSError, ValueError) as exc:
+            return {"result": -2, "message": str(exc) if isinstance(exc,ValueError) else "无法保存中台订阅"}
+
     @app.post("/mgr/assets/{asset}/quote")
     async def quote(request: Request, asset: str, symbol: str = Body(..., embed=True),
                     mode: str = Body("session", embed=True)):

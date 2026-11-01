@@ -3,7 +3,7 @@
     <div class="hub-row"><strong>{{title}}数据中台</strong><span>{{labels[info.state] || '读取中'}}</span>
       <small>{{info.symbols?.length || 0}} 个已保存订阅</small>
       <button @click="opened=!opened">{{opened?'收起':'选择标的'}}</button>
-      <button v-if="info.enabled" :disabled="busy" @click="change('stop')">停止采集</button>
+      <button v-if="info.enabled && canManage" :disabled="busy" @click="change('stop')">停止采集</button>
     </div>
     <p v-if="error || info.message" role="alert">{{error || info.message}}</p>
     <div v-if="opened" class="edit">
@@ -26,11 +26,14 @@
 <script setup>
 import {computed,onMounted,onBeforeUnmount,ref} from 'vue'
 import AssetShortcuts from '../assets/AssetShortcuts.vue'
-const props=defineProps({asset:String,title:String})
+import {useSessionStore} from '@/store.js'
+const props=defineProps({asset:String,title:String,editing:Boolean})
 const info=ref({}),draft=ref([]),input=ref(''),future=ref(''),chain=ref([]),option=ref('')
-const opened=ref(false),busy=ref(false),error=ref('')
+const opened=ref(props.editing),busy=ref(false),error=ref('')
 const dirty=computed(()=>JSON.stringify(draft.value)!==JSON.stringify(info.value.symbols || []))
-const disabled=computed(()=>busy.value || info.value.enabled || info.value.revision==null)
+const session=useSessionStore()
+const canManage=computed(()=>['admin','superman'].includes(session.cache.userinfo?.role))
+const disabled=computed(()=>!canManage.value || busy.value || info.value.enabled || info.value.revision==null)
 const labels={running:'运行中',stopped:'已停止',offline:'管理服务离线',pending:'正在应用',failed:'启动失败'}
 let timer,version=0,chainVersion=0
 function add(code){if(!disabled.value && code && !draft.value.includes(code))draft.value=[...draft.value,code]}

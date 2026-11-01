@@ -10,7 +10,7 @@
                 <el-tab-pane label="账户权益" name="equity"/>
             </el-tabs>
             <div class="wt-data-content">
-                <TradingTerminal v-if="selData==='terminal'" :groupid="groupid" @overview="$emit('overview',$event)" @subscriptions="handleClickTab({props:{name:'market'}})"/>
+                <TradingTerminal v-if="selData==='terminal'" :groupid="groupid" @overview="$emit('overview',$event)" @subscriptions="$router.push({path:'/schedule',query:{tab:'subscriptions',group:groupid}})"/>
                 <StrategyRuntime v-if="selData==='runtime'" :groupid="groupid" :running="groupinfo.running" @changed="$emit('plan-changed',$event)"/>
                 <RiskPanel v-if="selData==='risk'" :groupid="groupid"/>
                 <DataWorkbench v-if="selData==='data'" :groupid="groupid"/>

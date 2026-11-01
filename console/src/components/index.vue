@@ -120,7 +120,7 @@ export default {
         navItems() {
             return [
                 {path:'/monitor',icon:'monitor',label:'监控中心',hint:'组合、通道与实时事件',show:this.isGuest || !this.isResearcher || this.isAdmin},
-                {path:'/schedule',icon:'schedule',label:'调度中心',hint:'进程与计划任务',show:this.isGuest || this.isAdmin},
+                {path:'/schedule',icon:'schedule',label:'调度中心',hint:'进程、采集订阅与计划任务',show:true},
                 {path:'/backtest',icon:'backtest',label:'在线回测',hint:'策略研究与历史检验',show:this.isGuest || this.isResearcher || this.isAdmin},
                 {path:'/strategies',icon:'book',label:'策略管理',hint:'策略库、版本与源码',show:true},
                 {path:'/history',icon:'folder',label:'历史数据',hint:'数据覆盖、导入与清理',show:true},
@@ -167,10 +167,13 @@ export default {
         }
     },
     methods: {
-        assetLink(path){return ['/monitor','/backtest','/history','/strategies'].includes(path) && this.isAssetPage && this.asset!=='futures'?{path,query:{asset:this.asset}}:path},
+        assetLink(path){
+            if(path==='/schedule' && !this.isAdmin && !this.isGuest)return {path,query:{tab:'subscriptions',group:this.$route.query.group}};
+            return ['/monitor','/backtest','/history','/strategies'].includes(path) && this.isAssetPage && this.asset!=='futures'?{path,query:{asset:this.asset}}:path
+        },
         openCommands(){this.commandQuery='';this.showCommands=true;this.loadCommandGroups()},
         loadCommandGroups(){this.$api.getGroups(result=>{if(result.result===0)this.commandGroups=result.groups||[]})},
-        runPage(path,group){this.showCommands=false;this.$router.push({path,query:group?{group}:{}})},
+        runPage(path,group){this.showCommands=false;this.$router.push(group?{path,query:{group}}:this.assetLink(path))},
         handleShortcut(event){if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();this.openCommands()}},
         toggleRail(){this.railExpanded=!this.railExpanded;localStorage.setItem('wt.workspace.railExpanded',String(this.railExpanded))},
         toggleTheme(){setTheme(this.theme==='dark'?'light':'dark')},

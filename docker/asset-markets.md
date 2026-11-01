@@ -167,7 +167,7 @@ python -m wtpy.monitor.CommodityOptionSim DCE.m2701-C-3000 Example 1 \
 
 各开一个采集进程，订阅列表和历史存储都分开。
 
-1. 在调度中心展开商品期权或加密货币数据中台。
+1. 在调度中心打开「数据中台订阅」，选择资产。
 2. 点已订阅期货查期权链，或点常用币对。
 3. 将合约加入列表，再点「仅保存订阅」。
 4. 点「启动采集」后，关掉网页仍继续采集。
@@ -183,6 +183,33 @@ python -m wtpy.monitor.CollectorControl crypto
 
 管理进程报告的「运行中」表示采集进程已启动。
 实际入库记录可到同资产的历史数据页查看。
+
+## 怎样为不同期货中台选合约？
+
+在调度列表点击期货中台所在行的「选择标的」。
+
+- 页面按组合和通道环境读取清单。
+- 选择合约后可预览新增和移除，再确认保存。
+- 当前环境遵循交易引擎与采集进程的操作限制。
+- 已停止的备用环境可预存下次启动使用的清单。
+- 历史补数仍在监控中心的「行情数据」页。
+
+要启用备用环境预存，将中台 ID 加入网页服务的
+`WT_DEFERRED_HUBS`，多个 ID 用逗号分隔。
+为每个 ID 单独建立共享目录
+`assets/futures/deferred/<中台 ID>`。
+网页服务与中台启动器必须能读写同一物理目录。
+启动器在初始化行情引擎前读取清单。
+
+```python
+from pathlib import Path
+from wtpy.monitor.DeferredSubscriptions import apply_at_start
+
+apply_at_start(Path(shared_plan_dir), Path(datahub_dir))
+```
+
+若原订阅已经变化，启动器继续使用已有配置。
+调度页显示原因，管理员可以重新选择。
 
 ## 怎样分析多个合约？
 

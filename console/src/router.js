@@ -67,7 +67,7 @@ router.beforeEach(async to=>{
  if(to.path==='/admins'&&!['admin','superman'].includes(role))return '/monitor'
  if(to.path==='/backtest'&&!['researcher','admin','superman'].includes(role))return '/monitor'
  if(['/research','/terminal'].includes(to.path)&&!['researcher','admin','superman'].includes(role))return '/monitor'
- if(to.path==='/schedule'&&!['admin','superman'].includes(role))return '/monitor'
+ if(to.path==='/schedule'&&to.query.tab!=='subscriptions'&&!['admin','superman'].includes(role))return '/monitor'
  return true
 })
 export default router

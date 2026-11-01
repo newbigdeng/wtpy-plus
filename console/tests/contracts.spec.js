@@ -48,10 +48,13 @@ test('contract editor previews equal budgets and keeps edits in the page draft',
 test('phone: subscription shortcut and running/draft contract labels stay distinct',async({page})=>{
  await page.setViewportSize({width:390,height:844})
  const f=await contractFixture(page,true)
+ await page.route('**/mgr/qrychannels',r=>r.fulfill({json:{result:0,current:'simnow',profiles:[{id:'simnow',label:'SimNow'}]}}))
  await page.getByRole('tab',{name:'交易工作台',exact:true}).click()
  await page.getByRole('button',{name:'订阅合约',exact:true}).click()
  await expect(page.getByRole('heading',{name:'实时采集订阅',exact:true})).toBeVisible()
  await expect(page.getByText('请先停止交易引擎，再修改采集订阅。',{exact:true})).toBeVisible()
+ await expect(page).toHaveURL(/schedule.*subscriptions/)
+ await page.goBack()
  await page.getByRole('tab',{name:'策略管理',exact:true}).click()
  const cell=page.locator('.managed-strategies > .el-table .el-table__body tbody tr').first()
  await expect(cell).toContainText('SHFE.rb.2701')
