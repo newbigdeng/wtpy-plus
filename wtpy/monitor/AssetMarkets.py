@@ -57,7 +57,7 @@ def dataset_code(asset, exchange, ticker, info):
         instrument(asset, ticker if asset == "crypto" else exchange + "." + ticker)
     except ValueError:
         return None
-    if asset == "crypto" and exchange != "COINBASE":
+    if asset == "crypto" and exchange not in ("COINBASE","BINANCE"):
         return None
     if asset == "option":
         return commodity_option_code(exchange, ticker, info.get("expiredate")) if info.get("option") else None

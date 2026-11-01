@@ -31,3 +31,14 @@ def test_native_catalog_merge(tmp_path,asset,provider,ex,symbol):
     item,=asset_catalog(root,asset)
     assert (item["period"],item["rows"],item["dates"])==("d",1,[20250102])
     assert not (root/"storage").exists()
+
+
+def test_crypto_midnight_close(tmp_path,monkeypatch):
+    from wtpy.monitor import AssetBackfill as feed
+    monkeypatch.setattr(feed,"crypto_rows",lambda *args:[[202501090000,20250108,8,9,7,8,2]])
+    day=date(2025,1,8)
+    bars=feed.intraday(tmp_path,"crypto","binance","BINANCE","BTC-USDT",day,day,"m5")
+    assert bars[0]["time"]+199000000000==202501090000
+    assert feed.save(tmp_path,"crypto","binance","BINANCE","BTC-USDT",bars,"m5")["added"]==1
+    item,=asset_catalog(tmp_path,"crypto")
+    assert (item["code"],item["dates"],item["period"])==("BINANCE.BTC-USDT",[20250108],"m5")
