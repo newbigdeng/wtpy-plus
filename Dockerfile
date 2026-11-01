@@ -7,6 +7,7 @@ RUN npm run build
 
 FROM wondertrader-plus:native AS workbench
 ARG WITH_MARKET_DATA=1
+ARG WITH_CTP_QUOTES=1
 ENV PYTHONUNBUFFERED=1 PYTHONPATH=/workspace/src/wtpy \
     PATH=/opt/wt-venv/bin:$PATH HOME=/data TZ=Asia/Shanghai
 WORKDIR /workspace/src/wtpy
@@ -15,6 +16,12 @@ COPY requirements-data.txt /opt/wt/requirements-data.txt
 RUN python3 -m venv /opt/wt-venv \
     && python -m pip install --no-cache-dir -r /opt/wt/requirements-plus.lock \
     && if [ "$WITH_MARKET_DATA" = "1" ]; then python -m pip install --no-cache-dir -r /opt/wt/requirements-data.txt -c /opt/wt/requirements-plus.lock; fi \
+    && if [ "$WITH_CTP_QUOTES" = "1" ]; then \
+           apt-get update && apt-get install -y --no-install-recommends locales \
+           && localedef --no-archive -i zh_CN -f GB18030 zh_CN.GB18030 \
+           && python -m pip install --no-cache-dir openctp-ctp==6.7.11.0 \
+           && python -c "from openctp_ctp import thostmduserapi"; \
+       fi \
     && python -m pip check
 COPY wtpy/ ./wtpy/
 COPY LICENSE /opt/wt/wtpy-LICENSE

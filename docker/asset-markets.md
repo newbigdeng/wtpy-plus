@@ -32,6 +32,12 @@ CTP 直接推送。切换标的会关闭旧会话。
 仅转发器持有代理配置。
 期货和商品期权需要 CTP 行情 SDK。
 默认连接 SimNow 第二套仿真行情前置。
+Linux 行情镜像还需生成厂商使用的中文字符环境。
+
+```bash
+# Debian 或 Ubuntu 已安装 locales 时
+localedef --no-archive -i zh_CN -f GB18030 zh_CN.GB18030
+```
 
 ```bash
 python -m pip install openctp-ctp==6.7.11.0
@@ -116,7 +122,14 @@ python -m wtpy.monitor.AssetCollector crypto BTC-USD ETH-USD
 启动器按命令行合约设置订阅过滤器。
 股票 XTP 行情权限由券商提供。
 
-用 CTP 合约加载器导出商品期权合约资料。
+只看合约链时，可导入 OpenCTP 的公开合约字典。
+文件只进 `option/reference/`，用于查找合约。
+
+```bash
+python -m wtpy.monitor.OptionChain instruments.json
+```
+
+用 CTP 合约加载器导出运行策略所需的基础资料。
 保留标的期货、看涨看跌、行权价、到期日。
 采集配置和凭据只放在本地数据卷。
 

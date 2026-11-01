@@ -117,20 +117,8 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
         if error:
             return error
         try:
-            from .MarketSubscriptions import _load
-            from .AssetMarkets import OPTION
-            exchange, future = instrument("futures", underlying)
-            path = inside(asset_root(deploy, "option"), "common", "contracts.json")
-            if not path.is_file():
-                raise ValueError("请将最新商品期权 contracts.json 放入期权的 common 目录")
-            rows = []
-            for ticker, contract in _load(path).get(exchange, {}).items():
-                option = contract.get("option", {})
-                match = OPTION.fullmatch(ticker)
-                if match and option.get("underlying") == future:
-                    rows.append(dict(symbol=exchange+"."+ticker, side="看涨" if match[4]=="C" else "看跌",
-                                     strike=float(option["strikeprice"]), expiry=contract.get("expiredate")))
-            return {"result": 0, "contracts": sorted(rows, key=lambda row:(row["expiry"] or 0,row["strike"],row["side"]))}
+            from .OptionChain import chain
+            return {"result": 0, **chain(asset_root(deploy, "option"), underlying)}
         except (OSError, KeyError, ValueError) as exc:
             return {"result": -2, "message": str(exc) if isinstance(exc,ValueError) else "无法读取期权合约表"}
 

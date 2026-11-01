@@ -18,7 +18,7 @@ async function search(){
     const data=await response.json()
     if(id!==serial)return
     if(data.result!==0)throw new Error(data.message)
-    contracts.value=data.contracts;message.value=data.contracts.length?'点击合约代码开始看盘':'本地合约表没有该标的的期权'
+    contracts.value=data.contracts;message.value=data.contracts.length?data.source+' · 点击合约代码开始看盘':'合约表没有该标的的期权'
   }catch(error){if(id===serial)message.value=error.message}
 }
 </script>
