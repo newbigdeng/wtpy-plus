@@ -4,6 +4,8 @@ import importlib.util
 import json
 import os
 import tempfile
+import signal
+from threading import Event
 from datetime import date
 from pathlib import Path
 
@@ -42,12 +44,15 @@ def main():
     parser.add_argument("--analysis-session", help="策略读取的同环境分析会话")
     parser.add_argument("--simnow-profile", default=os.getenv("WT_OPTION_SIM_PROFILE"),
                         help="服务器上现有的 SimNow 交易通道文件")
+    parser.add_argument("--replay-clock",action="store_true",help="仅 7×24：按全天时段接收柜台回放")
     parser.add_argument("--start", action="store_true", help="启动 SimNow 模拟策略")
     parser.add_argument("--deploy", default=os.environ.get("WT_DATA_DIR", "/data"))
     args = parser.parse_args()
     account = simnow_profile(args.simnow_profile) if args.simnow_profile else None
     tdfront = account["front"] if account else "tcp://182.254.243.31:40001"
     mdfront, mode = SIM_FRONTS[tdfront]
+    if args.replay_clock and mode!="simulation":
+        raise ValueError("全天回放时钟仅适用于 SimNow 7×24")
     root = asset_root(args.deploy, "option")
     common = inside(root, "common")
     contracts = _load(inside(root, "common", "contracts.json"))
@@ -112,8 +117,19 @@ def main():
         feed = dict(broker=account["broker"], user=account["user"], **{"pass":account["pass"]},
                     id="option_md", active=True, module="ParserCTP", front=mdfront,
                     code=",".join(ex+"."+ticker for ex,items in selected.items() for ticker in items))
+        if args.replay_clock:
+            sessions = _load(Path(bases["session"]))
+            products = _load(Path(bases["commodity"]))
+            sessions["TRADING"] = dict(name="SimNow replay",offset=0,sections=[{"from":0,"to":2359}])
+            for exchange, items in selected.items():
+                for item in items.values():
+                    products[exchange][item["product"]]["session"] = "TRADING"
+            for key, values in (("session",sessions),("commodity",products)):
+                path = work/("replay-"+key+".json")
+                atomic_json(path,values)
+                bases[key] = str(path)
         atomic_json(work/"contract.json", selected)
-        atomic_json(work/"log.json", {"root":{"level":"info","sinks":[{"type":"console_sink"}]}})
+        atomic_json(work/"log.json", {"root":{"level":"info","sinks":[{"type":"console_sink","pattern":"[%l] %v"}]}})
         kind = row["engine_type"]
         config = dict(basefiles={**bases,"contract":str(work/"contract.json"),"utf-8":True},
                       env=dict(name=kind.lower(), mode="product", fees=str(fees), product={"session":"TRADING"}),
@@ -129,11 +145,13 @@ def main():
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         strategy = getattr(module,row["class_name"])(name=row["id"],**params)
-        engine = WtEngine(EngineType.ET_CTA if kind=="CTA" else EngineType.ET_HFT, str(work/"log.json"))
+        engine = WtEngine(EngineType.ET_CTA if kind=="CTA" else EngineType.ET_HFT, "log.json")
         try:
             with tempfile.NamedTemporaryFile(mode="w",dir=work,suffix=".json",encoding="utf-8") as stream:
                 json.dump(config,stream);stream.flush()
                 engine.init(str(common),stream.name)
+            # HFT context creation binds its trader immediately in WtPorter.
+            engine.commitConfig()
             if kind == "CTA":
                 context = engine.add_cta_strategy(strategy)
             else:
@@ -141,7 +159,14 @@ def main():
             if args.analysis_session:
                 from .OptionFrames import guard_option_orders
                 guard_option_orders(context,kind,check_frame,set(codes+hedges))
-            engine.run(False)
+            stopped = Event()
+            handlers = {sig: signal.signal(sig, lambda *_: stopped.set()) for sig in (signal.SIGINT, signal.SIGTERM)}
+            try:
+                engine.run(True)
+                stopped.wait()
+            finally:
+                for sig, handler in handlers.items():
+                    signal.signal(sig, handler)
         finally:
             engine.release()
 

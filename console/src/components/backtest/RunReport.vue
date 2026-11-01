@@ -8,7 +8,7 @@
   <header><div><h1>回测统计报告</h1><p>{{strategyName}} · {{task}}</p></div><div class="report-actions"><el-button @click="load" :loading="busy">刷新报告</el-button>
     <DeleteRun v-if="report" :asset="asset" :mode="mode" :task="task" :strategy="route.query.strategy" :title="strategyName" :status="report.status" @deleted="router.replace(shelf)"/></div></header>
   <p v-if="busy || error" role="status">{{error || '正在读取任务流水…'}}</p>
-  <ReportCandles v-if="task && assetName && modeName" :asset="asset" :mode="mode" :task="task" :strategy="route.query.strategy"/>
+
   <template v-if="report"><p>任务状态 {{statusLabel}} <span v-if="report.error"> · {{report.error}}</span></p>
     <section class="cards"><div v-for="[label,value] in metrics" :key="label"><small>{{label}}</small><strong>{{value}}</strong></div></section>
     <section v-if="report.legs"><h2>各腿成交与期末持仓</h2>
@@ -20,6 +20,8 @@
     <TerminalChart v-if="points.length" class="chart" :plot="equityPlot" label="回测资金曲线"/><p v-else>该任务没有可用的资金记录。</p>
     <p>{{note}}</p>
     <template v-if="hasEquity && points.length && capital>0"><h2>回撤（%）</h2><TerminalChart class="chart drawdown" :plot="ddPlot" label="回测回撤曲线"/></template>
+    <ReportDiagnostics :asset="asset" :mode="mode" :task="task" :strategy="route.query.strategy" :points="points" :capital="capital" :total="total"/>
+    <ReportCandles :asset="asset" :mode="mode" :task="task" :strategy="route.query.strategy"/>
     <h2>{{mode==='expiry'?'清算与成交流水':'成交明细'}}</h2>
     <p v-if="total==null">任务未记录成交流水。</p><p v-else-if="!total">账簿中有 0 笔记录。</p>
     <template v-else><p>共 {{total}} 笔 · 第 {{page}} / {{pages}} 页 <small v-if="mode==='research' && total>report.trades.length">研究快照保存前 {{report.trades.length}} 笔</small></p>
@@ -37,6 +39,7 @@ import DeleteRun from './DeleteRun.vue'
 import {ArrowLeft} from '@element-plus/icons-vue'
 import TerminalChart from '../terminal/TerminalChart.vue'
 import ReportCandles from './ReportCandles.vue'
+import ReportDiagnostics from './ReportDiagnostics.vue'
 const route=useRoute(),report=ref(null),page=ref(1),busy=ref(false),error=ref('')
 const asset=computed(()=>route.query.asset||'futures'),mode=computed(()=>route.query.mode||'native'),task=computed(()=>route.query.task)
 const router=useRouter(),shelf=computed(()=>({name:'backtest-reports',query:{asset:asset.value,mode:route.query.listMode,strategy:route.query.listStrategy,q:route.query.q}}))
@@ -50,9 +53,10 @@ async function post(path,body){
   const d=await r.json();if(d.result!==0)throw Error(d.message||'读取任务失败');return d
 }
 let sequence=0
-async function load(){
-  const id=++sequence;busy.value=true;error.value='';report.value=null
-  const q=route.query,offset=(page.value-1)*100
+async function load(keepReport=false,targetPage=page.value){
+  const id=++sequence;busy.value=true;error.value=''
+  if(keepReport!==true)report.value=null
+  const q=route.query,offset=(targetPage-1)*100
   try{
     let value
     if(!assetName.value||!modeName.value||!task.value)throw Error('报告地址缺少有效任务')
@@ -84,14 +88,18 @@ async function load(){
       const cap=d.capital??d.summary?.capital
       value={status:d.status,error:d.error,capital:cap,points:(d.funds||[]).map(f=>[f.date,(cap??0)+f.dynbalance]),summary:d.summary||{},trades:d.trades||[],total:d.trade_count,fees:d.funds?.at(-1)?.fee,legs:d.leg_report,name:d.leg_report?.title}
     }else throw Error('报告类型与资产不匹配')
-    if(id===sequence)report.value=value
+    if(id===sequence){report.value=value;page.value=targetPage}
   }catch(e){if(id===sequence)error.value=e.message}finally{if(id===sequence)busy.value=false}
 }
 watch(()=>route.fullPath,()=>{page.value=1;load()},{immediate:true})
-function turn(delta){page.value+=delta;if(mode.value==='plus'||(mode.value==='native' && asset.value!=='futures'))load()}
+function turn(delta){
+  const target=page.value+delta
+  if(mode.value==='plus'||(mode.value==='native' && asset.value!=='futures'))load(true,target)
+  else page.value=target
+}
 const capital=computed(()=>report.value?.capital),total=computed(()=>report.value?.total),pages=computed(()=>Math.ceil((mode.value==='research'?report.value?.trades?.length:total.value)/100))
 const points=computed(()=>(report.value?.points||[]).filter(p=>Number.isFinite(p[1])))
-const hasEquity=computed(()=>mode.value!=='native'||capital.value!=null)
+const hasEquity=computed(()=>['plus','expiry'].includes(mode.value)||capital.value!=null)
 const shown=computed(()=>['research','expiry'].includes(mode.value)||(mode.value==='native' && asset.value==='futures')?report.value.trades.slice((page.value-1)*100,page.value*100):report.value.trades)
 const equityPlot=computed(()=>({labels:points.value.map(p=>String(p[0])),series:[{name:hasEquity.value?'账户权益':'累计净盈亏',data:points.value.map(p=>p[1])}]}))
 const drawdowns=computed(()=>{let peak=capital.value;return points.value.map(p=>{peak=Math.max(peak,p[1]);return peak>0?(p[1]/peak-1)*100:null})})
@@ -104,7 +112,7 @@ const metrics=computed(()=>{
   const ret=s.total_return??(cap>0 && last!=null?(last/cap-1)*100:null)
   const dd=s.max_falldown??(cap>0 && points.value.length?drawdowns.value.reduce((peak,v)=>Math.max(peak,-v),0):null)
   const m=[['初始资金',fmt(cap)],['期末权益',fmt(hasEquity.value?last:null)],['总收益率',fmt(ret,'%')],[mode.value==='plus'?'展示点最大回撤':'最大回撤',fmt(dd,'%')],['累计手续费',fmt(r.fees)]]
-  if(['native','research'].includes(mode.value))m.push(['盈利交易日占比',fmt(s.win_rate,'%')],['夏普比率',fmt(s.sharpe_ratio)])
+  if(['native','research'].includes(mode.value))m.push(['盈利交易日占比',fmt(s.win_rate,'%')])
   return m
 })
 const columns=computed(()=>mode.value==='expiry'?

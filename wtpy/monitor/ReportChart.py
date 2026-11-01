@@ -105,17 +105,28 @@ def registered(app, deploy, authorize):
     slots=BoundedSemaphore(1)
     @app.post("/mgr/assets/{asset}/report-chart")
     def chart(request:Request, asset:str, task:str=Body(...), mode:str=Body("native"), strategy:str=Body(""),
-              code:str=Body(""), day:str=Body("")):
+              code:str=Body(""), day:str=Body(""), diagnostics:bool=Body(False)):
         user,error=authorize(request,asset,research=True)
         if error:return error
         try:
             field(task);owner=field(user["loginid"])
             root=asset_root(deploy,asset)
             if mode=="expiry" and asset=="option":
+                if diagnostics:
+                    rec=read(inside(root,"backtests","expiry-runs",owner,task+".json"))
+                    if not rec:raise ValueError("本账户没有该清算任务")
+                    sample=read(inside(root,"history","expiry",field(rec["plan"]["sample"])+".json"))
+                    with slots:return dict(result=0,**native_worker(dict(action="expiry_diagnostics",rec=rec,sample=sample)))
                 return dict(result=0,**expiry(root,owner,task,code))
             sources=Path("/report-sources")
             if mode=="plus" and asset=="futures":
-                args=plus(inside(sources,"plus",task),task,owner)
+                folder=inside(sources,"plus",task)
+                if diagnostics:
+                    from .RunDiagnostics import plus_details
+                    record=read(folder/"task.json",{})
+                    if record.get("user")!=owner or record.get("id")!=task:raise ValueError("本账户没有该任务")
+                    with slots:return dict(result=0,**plus_details(folder))
+                args=plus(folder,task,owner)
             elif mode in ("native","research"):
                 if mode=="research":
                     if asset!="futures":raise ValueError("研究实验不属于此资产")
@@ -132,6 +143,9 @@ def registered(app, deploy, authorize):
                         raise ValueError("本账户没有该回测记录")
                 folder=inside(base,owner,strategy,"backtests",task)
                 if not folder.is_dir():raise ValueError("本账户没有此任务的行情目录")
+                if diagnostics:
+                    with slots:
+                        return dict(result=0,**native_worker(dict(action="run_diagnostics",folder=str(folder),task=task,asset=asset)))
                 args=native(folder,task)
             else:raise ValueError("报告类型与资产不匹配")
             folder,codes,fills,start,end,period=args

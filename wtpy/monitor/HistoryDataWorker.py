@@ -127,6 +127,12 @@ def run(payload):
     if payload["action"] == "option_watch_bars":
         from wtpy.monitor.OptionWatchArchive import decode_native
         return decode_native(payload,WtDataHelper())
+    if payload["action"] == "expiry_diagnostics":
+        from wtpy.monitor.RunDiagnostics import expiry_details
+        return expiry_details(payload["rec"],payload["sample"])
+    if payload["action"] == "run_diagnostics":
+        from wtpy.monitor.RunDiagnostics import native_details
+        return native_details(payload,WtDataHelper())
     if payload["action"] == "report_candles":
         from wtpy.monitor.ReportChart import candles
         return candles(payload, WtDataHelper())
