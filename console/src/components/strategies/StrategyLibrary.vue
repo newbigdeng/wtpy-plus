@@ -1,17 +1,14 @@
 <template>
  <section class="strategy-library" v-loading="loading">
-  <header><div><h1>策略管理</h1><p>在这里维护 Python 策略。组合和研究使用固定版本的副本。</p></div><div class="library-actions"><el-button @click="load">刷新</el-button><el-button v-if="asset==='futures'" @click="chooseResearch">从已有研究复制</el-button><el-button @click="create">新建策略</el-button><el-button type="primary" @click="chooseFile">导入 .py</el-button><input ref="file" type="file" accept=".py,text/x-python" hidden @change="importFile"/></div></header>
-  <section v-if="factoryRows.length"><h2>本账户的 C++ 期权策略</h2>
-    <p v-for="f in factoryRows" :key="f.id"><router-link :to="{path:'/backtest',query:{asset:'option',panel:'factory',factory:f.id}}">{{f.title}} · v{{f.version}} · 打开历史回测</router-link></p>
-  </section>
+  <header><div><h1>策略管理</h1><p>{{asset==='option'?'维护 Python 策略，或选择已安装的 C++ 策略进行历史回测。':'在这里维护 Python 策略。组合和研究使用固定版本的副本。'}}</p></div><div class="library-actions"><el-button @click="load">刷新</el-button><el-button v-if="asset==='futures'" @click="chooseResearch">从已有研究复制</el-button><el-button @click="create">新建策略</el-button><el-button type="primary" @click="chooseFile">导入 .py</el-button><input ref="file" type="file" accept=".py,text/x-python" hidden @change="importFile"/></div></header>
   <div class="library-filter"><el-radio-group v-model="kind"><el-radio-button value="">全部</el-radio-button><el-radio-button v-for="item in ['CTA','HFT','SEL']" :key="item" :value="item">{{item}}</el-radio-button></el-radio-group><el-input v-model="search" placeholder="搜索名称、ID 或策略类" clearable aria-label="搜索策略库"/><span>{{filtered.length}} 个策略</span></div>
   <el-alert v-if="!canManage" type="info" :closable="false" title="游客可以查看策略目录，不能读取源码或修改策略。"/>
-  <el-table :data="filtered" stripe empty-text="策略库为空。管理员可导入 Python 文件或创建策略框架。" @row-dblclick="open">
-   <el-table-column label="策略" min-width="200"><template #default="{row}"><strong>{{row.name}}</strong><small>{{row.id}} · {{row.class_name}}</small></template></el-table-column>
+  <el-table :data="filtered" stripe :empty-text="search || kind ? '没有匹配的策略。' : '策略库为空。管理员可导入 Python 文件或创建策略框架。'" @row-dblclick="open">
+   <el-table-column label="策略" min-width="200"><template #default="{row}"><strong>{{row.name}}</strong><small>{{row.id}} · {{row.factory?'C++':row.class_name}}</small></template></el-table-column>
    <el-table-column label="类型" width="90"><template #default="{row}"><el-tag effect="plain">{{row.engine_type}}</el-tag></template></el-table-column>
    <el-table-column label="版本" width="100"><template #default="{row}">v{{row.version}}</template></el-table-column>
    <el-table-column prop="description" label="说明" min-width="200" show-overflow-tooltip/>
-   <el-table-column label="操作" width="170"><template #default="{row}"><el-button link @click="open(row)">{{canManage?'代码与版本':'查看'}}</el-button><el-button link type="danger" @click="remove(row)">删除</el-button></template></el-table-column>
+   <el-table-column label="操作" width="170"><template #default="{row}"><el-button link @click="open(row)">{{row.factory?'历史回测':canManage?'代码与版本':'查看'}}</el-button><el-button v-if="!row.factory" link type="danger" @click="remove(row)">删除</el-button></template></el-table-column>
   </el-table>
   <p class="library-note">删除只从目录移除条目，组合快照和历史版本保留。库中保存新版本不会改变已应用的组合计划。</p>
   <el-dialog v-model="showCreate" title="新建策略框架" width="420px"><el-form label-position="top"><el-form-item label="策略类型"><el-select v-model="createKind"><el-option v-for="item in ['CTA','HFT','SEL']" :key="item" :value="item" :label="item"/></el-select></el-form-item></el-form><template #footer><el-button @click="showCreate=false">取消</el-button><el-button type="primary" @click="createTemplate">生成框架</el-button></template></el-dialog>
@@ -35,7 +32,16 @@ export default {
  computed:{
   asset(){return ['stock','option','crypto'].includes(this.$route.query.asset)?this.$route.query.asset:'futures'},
   canManage(){return ['admin','superman'].includes(useSessionStore().cache.userinfo?.role)},
-  filtered(){const query=this.search.trim().toLowerCase();return this.strategies.filter(row=>(!this.kind||row.engine_type===this.kind)&&(!query||[row.id,row.name,row.class_name,row.description].join(' ').toLowerCase().includes(query)))},
+  filtered(){
+    const factories=this.factoryRows.map(f=>({
+      id:f.id,name:f.title,version:f.version,engine_type:'CTA',class_name:'C++',factory:true,
+      description:f.codes.join(' · ')
+    }))
+    const query=this.search.trim().toLowerCase()
+    return [...this.strategies,...factories].filter(row=>
+      (!this.kind || row.engine_type===this.kind) &&
+      [row.id,row.name,row.class_name,row.description].join(' ').toLowerCase().includes(query))
+  },
   editorOptions(){return {mode:'python',indentUnit:4,readOnly:!this.canManage,extraKeys:{'Ctrl-S':()=>this.save()}}}
  },
  methods:{
@@ -50,7 +56,11 @@ export default {
   async chooseResearch(){if(!this.permit())return;try{this.researches=(await this.request('strategy_library_research')).strategies||[];this.researchId=this.researches[0]?.id||'';this.researchLibraryId='';this.showResearch=true}catch(error){this.$message.error(error.message)}},
   async importResearch(){if(!this.permit()||this.saving)return;this.editorError='';this.saving=true;try{const value=await this.request('strategy_library_import_research',{research_id:this.researchId,library_id:this.researchLibraryId});this.draft=value.strategy;this.showResearch=false;this.showEditor=true;this.$message.success(value.message);await this.load()}catch(error){this.$message.error(error.message)}finally{this.saving=false}},
   async createTemplate(){this.editorError='';try{this.draft={...blank(),source:(await this.request('strategy_library_template',{engine_type:this.createKind})).source};this.showCreate=false;this.showEditor=true}catch(error){this.$message.error(error.message)}},
-  async open(row){const serial=++this.editorRequest;this.draft={...blank(),...row};this.editorError='';this.editorLoading=true;this.showEditor=true;try{const value=await this.request('strategy_library_get',{library_id:row.id,version:row.version});if(serial!==this.editorRequest)return;if(!value.strategy)throw new Error('策略版本响应缺少详情');if(this.canManage&&!value.strategy.source?.trim())throw new Error('此版本源码无法读取，请刷新后重试');this.draft=value.strategy}catch(error){if(serial===this.editorRequest){this.editorError=error.message;this.$message.error(error.message)}}finally{if(serial===this.editorRequest)this.editorLoading=false}},
+  open(row){
+    if(row.factory)return this.$router.push({path:'/backtest',query:{asset:'option',panel:'factory',factory:row.id}})
+    return this.openEditor(row)
+  },
+  async openEditor(row){const serial=++this.editorRequest;this.draft={...blank(),...row};this.editorError='';this.editorLoading=true;this.showEditor=true;try{const value=await this.request('strategy_library_get',{library_id:row.id,version:row.version});if(serial!==this.editorRequest)return;if(!value.strategy)throw new Error('策略版本响应缺少详情');if(this.canManage&&!value.strategy.source?.trim())throw new Error('此版本源码无法读取，请刷新后重试');this.draft=value.strategy}catch(error){if(serial===this.editorRequest){this.editorError=error.message;this.$message.error(error.message)}}finally{if(serial===this.editorRequest)this.editorLoading=false}},
   async save(){if(!this.permit()||this.saving)return;this.saving=true;try{if(!/^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(this.draft.id))throw new Error('ID须以英文字母开头，只能包含字母、数字、下划线或短横线，最多40字符');const result=await this.request('strategy_library_save',{library_id:this.draft.id,name:this.draft.name,description:this.draft.description||'',source:this.draft.source,base_version:this.draft.version||null});this.draft=result.strategy;this.$message.success(result.message);await this.load()}catch(error){this.$message.error(error.message)}finally{this.saving=false}},
   async remove(row){if(!this.permit())return;try{await this.$confirm('从策略库移除“'+row.name+'”？组合内已选版本和历史记录仍保留。','删除库策略',{type:'warning',confirmButtonText:'从目录移除',cancelButtonText:'取消'});const value=await this.request('strategy_library_delete',{library_id:row.id,base_version:row.version});this.$message.success(value.message);await this.load()}catch(error){if(error instanceof Error)this.$message.error(error.message)}}
  },async mounted(){await this.load();const row=this.strategies.find(s=>s.id===this.$route.query.edit);if(row && this.canManage)this.open(row)}

@@ -16,7 +16,7 @@
     <div v-if="filtered.length" class="rows"><p>共 {{filtered.length}} 条记录 · 按启动时间从新到旧</p><table><thead><tr><th>策略 / 任务</th><th>类型</th><th>启动时间</th><th>标的</th><th>状态</th><th>报告</th></tr></thead>
       <tbody><tr v-for="r in filtered" :key="r.mode+r.id"><td>{{r.title}}<small>{{r.id}}</small></td><td>{{types[r.mode]}}</td><td>{{r.at?new Date(r.at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—'}}</td>
         <td>{{r.symbol || '—'}}</td><td>{{states[r.status] || r.status || '历史记录'}}</td>
-        <td><router-link :to="{name:'run-report',query:{asset,mode:r.mode,task:r.id,strategy:r.straid}}">查看报告</router-link></td></tr></tbody></table></div>
+        <td><router-link :to="{name:'run-report',query:{asset,mode:r.mode,task:r.id,strategy:r.straid,listMode:route.query.mode,listStrategy:route.query.strategy,q:route.query.q}}">查看报告</router-link></td></tr></tbody></table></div>
   </section>
 </template>
 <script setup>
@@ -28,9 +28,13 @@ const states={completed:'已完成',running:'运行中',failed:'失败',interrup
 const route=useRoute(),router=useRouter(),asset=computed(()=>Object.hasOwn(names,route.query.asset)?route.query.asset:'futures')
 const sources=computed(()=>asset.value==='futures'?['native','plus','research']:asset.value==='option'?['native','expiry']:['native'])
 const mode=computed(()=>sources.value.includes(route.query.mode)?route.query.mode:'all')
-const strategies=ref([]),rows=ref([]),busy=ref(false),error=ref(''),search=ref('')
+const strategies=ref([]),rows=ref([]),busy=ref(false),error=ref('')
+const search=computed({
+  get:()=>String(route.query.q||''),
+  set:q=>router.replace({name:'backtest-reports',query:{...route.query,q:q||undefined}})
+})
 const filtered=computed(()=>rows.value.filter(r=>[r.title,r.symbol,r.id].join(' ').toLowerCase().includes(search.value.toLowerCase())))
-function setSource(mode,strategy){router.push({name:'backtest-reports',query:{asset:asset.value,mode:mode==='all'?undefined:mode,strategy:strategy||undefined}})}
+function setSource(mode,strategy){router.push({name:'backtest-reports',query:{asset:asset.value,mode:mode==='all'?undefined:mode,strategy:strategy||undefined,q:route.query.q}})}
 async function post(path,body={}){
   const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
   const d=await r.json();if(!r.ok||d.result!==0)throw Error(d.message||'无法读取报告目录');return d

@@ -1,6 +1,11 @@
 <template><article class="run-report">
-  <router-link :to="{name:'backtest-reports',query:{asset}}">← 回测报告列表</router-link>
-  <header><div><small>{{assetName}} / {{modeName}}</small><h1>回测统计报告</h1><p>{{strategyName}} · {{task}}</p></div><button @click="load" :disabled="busy">刷新报告</button></header>
+  <nav class="report-nav" aria-label="报告导航">
+    <router-link class="report-back" :to="{name:'backtest-reports',query:{asset,mode:route.query.listMode,strategy:route.query.listStrategy,q:route.query.q}}">
+      <el-icon aria-hidden="true"><ArrowLeft/></el-icon>返回报告列表
+    </router-link>
+    <span>{{assetName}} / {{modeName}}</span>
+  </nav>
+  <header><div><h1>回测统计报告</h1><p>{{strategyName}} · {{task}}</p></div><el-button @click="load" :loading="busy">刷新报告</el-button></header>
   <p v-if="busy || error" role="status">{{error || '正在读取任务流水…'}}</p>
   <ReportCandles v-if="task && assetName && modeName" :asset="asset" :mode="mode" :task="task" :strategy="route.query.strategy"/>
   <template v-if="report"><p>任务状态 {{statusLabel}} <span v-if="report.error"> · {{report.error}}</span></p>
@@ -27,6 +32,7 @@
 <script setup>
 import {ref,computed,watch} from 'vue'
 import {useRoute} from 'vue-router'
+import {ArrowLeft} from '@element-plus/icons-vue'
 import TerminalChart from '../terminal/TerminalChart.vue'
 import ReportCandles from './ReportCandles.vue'
 const route=useRoute(),report=ref(null),page=ref(1),busy=ref(false),error=ref('')
@@ -104,6 +110,10 @@ const columns=computed(()=>mode.value==='expiry'?
 </script>
 <style scoped>
 .run-report{height:100%;overflow:auto;padding:clamp(15px,3vw,40px);box-sizing:border-box;color:var(--wt-text)}
+.report-nav{display:flex;align-items:center;gap:14px;margin-bottom:14px;font-size:13px;color:var(--wt-muted)}
+.report-nav>span{padding-left:14px;border-left:1px solid var(--wt-line)}
+.report-back{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;color:var(--wt-text);background:var(--wt-surface);border:1px solid var(--wt-line);border-radius:4px;text-decoration:none}
+.report-back:hover,.report-back:focus-visible{border-color:var(--wt-text)}
 header,.cards{display:flex;gap:20px;align-items:center;justify-content:space-between}header button{margin-left:auto}
 h1{margin:.3em 0}h2{font-size:17px;margin-top:24px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr))}
 .cards div{border:1px solid var(--wt-line);padding:14px}.cards strong{display:block;font-size:19px;margin-top:7px}p,small{color:var(--wt-muted)}
