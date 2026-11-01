@@ -30,6 +30,7 @@ class DeskRequest(BaseModel):
     mode: Literal["session","simulation"] = "session"
     model: Literal["american","black76"] = "american"
     rate: float = Field(default=.02,ge=0,le=.5,allow_inf_nan=False)
+    scenario_vol: float | None = Field(default=None,gt=0,le=5,allow_inf_nan=False)
     query: SurfacePoint | None = None
     spread: Spread | None = None
 

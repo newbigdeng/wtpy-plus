@@ -19,9 +19,11 @@ test('analysis subscribes only checked contracts and the selected mode',async({p
   await page.getByPlaceholder('例如 DCE.m2701').fill('DCE.m2701')
   await page.getByRole('button',{name:'查看合约链'}).click()
   await page.getByLabel('分析 DCE.m2701-C-3000',{exact:true}).check()
+  await page.getByLabel('独立估值波动率 %').fill('30')
   await page.getByRole('button',{name:'开始分析'}).click()
   await expect.poll(()=>body?.chains).toEqual([{underlying:'DCE.m2701',symbols:[rows[0].symbol]}])
   expect(body.mode).toBe('simulation')
+  expect(body.scenario_vol).toBe(.30)
   await expect(page.getByText('测试会话结束')).toBeVisible()
 })
 

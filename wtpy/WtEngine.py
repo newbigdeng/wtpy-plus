@@ -394,6 +394,7 @@ class WtEngine:
         '''
         id = self.__wrapper__.create_cta_context(strategy.name(), slippage)
         self.__cta_ctxs__[id] = CtaContext(id, strategy, self.__wrapper__, self)
+        return self.__cta_ctxs__[id]
 
     def add_hft_strategy(self, strategy:BaseHftStrategy, trader:str, agent:bool = True, slippage:int = 0):
         '''
@@ -402,6 +403,7 @@ class WtEngine:
         '''
         id = self.__wrapper__.create_hft_context(strategy.name(), trader, agent, slippage)
         self.__hft_ctxs__[id] = HftContext(id, strategy, self.__wrapper__, self)
+        return self.__hft_ctxs__[id]
 
     def add_sel_strategy(self, strategy:BaseSelStrategy, date:int, time:int, period:str, trdtpl:str="CHINA", session:str="TRADING", slippage:int = 0):
         '''

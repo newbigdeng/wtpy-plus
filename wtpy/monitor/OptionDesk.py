@@ -62,10 +62,11 @@ class OptionDesk:
                 cache_key = (day, mid, fwd)
                 cached = self.cache.get(row["symbol"])
                 if not cached or cached[0]!=cache_key:
-                    metrics = contract_metrics(fwd,row["strike"],mid,tenor,plan["rate"],row["side"]=="看涨",plan["model"],today)
+                    metrics = contract_metrics(fwd,row["strike"],mid,tenor,plan["rate"],row["side"]=="看涨",plan["model"],today,plan.get("scenario_vol"))
                     self.cache[row["symbol"]] = (cache_key,metrics)
                 row.update(self.cache[row["symbol"]][1], forward=fwd, premium=mid,
-                           bid=quote["bid"],ask=quote["ask"],source_time=quote["time"],future_time=future["time"])
+                           bid=quote["bid"],ask=quote["ask"],source_time=quote["time"],future_time=future["time"],
+                           valid_until=min(quote["received"],future["received"])+BOOK_AGE)
                 groups[row["underlying"]].append(row)
             except (RuntimeError,ValueError,OverflowError) as exc:
                 row["reason"] = str(exc) if isinstance(exc,ValueError) else "报价无法在模型波动率区间内定价"

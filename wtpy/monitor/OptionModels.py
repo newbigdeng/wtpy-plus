@@ -12,7 +12,7 @@ def qdate(value):
     return ql.Date(int(text[6:8]), int(text[4:6]), int(text[:4]))
 
 
-def contract_metrics(forward, strike, premium, days, rate, call, model, today):
+def contract_metrics(forward, strike, premium, days, rate, call, model, today, scenario_vol=None):
     """Greeks hold the futures quote fixed for theta/rho; return daily theta and point vega/rho."""
     if days <= 0 or min(forward, strike, premium) <= 0:
         raise ValueError("已到期或价格无效")
@@ -70,6 +70,8 @@ def contract_metrics(forward, strike, premium, days, rate, call, model, today):
     values = dict(iv=iv, delta=(up-down)/(2*h), gamma=(up+down-2*base)/(h*h),
                   theta=price(forward,iv,days-1,rate)-base, vega=vega/100, rho=rho/100,
                   theoretical=base)
+    if scenario_vol is not None:
+        values["scenario_price"] = price(forward, scenario_vol, days, rate)
     if not all(isfinite(v) for v in values.values()):
         raise ValueError("定价引擎未得到有限解")
     return values

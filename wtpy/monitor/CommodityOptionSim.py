@@ -78,9 +78,9 @@ def main():
         params["underlyings"] = hedges
     if args.analysis_session:
         from .OptionFrames import read_option_frame
-        frame = read_option_frame(root,args.analysis_session,mode=mode)
-        if not set(options)<=set(r["symbol"] for r in frame["rows"]):
-            raise ValueError("分析会话未包含策略选择的全部期权")
+        def check_frame():
+            return read_option_frame(root,args.analysis_session,mode=mode,symbols=options)
+        check_frame()
         params["analysis_session"] = args.analysis_session
     lib = StrategyLibrary(inside(root, "strategies"))
     row = lib.get(args.strategy, args.version, allow_archived=False)
@@ -135,9 +135,12 @@ def main():
                 json.dump(config,stream);stream.flush()
                 engine.init(str(common),stream.name)
             if kind == "CTA":
-                engine.add_cta_strategy(strategy)
+                context = engine.add_cta_strategy(strategy)
             else:
-                engine.add_hft_strategy(strategy,"option_sim")
+                context = engine.add_hft_strategy(strategy,"option_sim")
+            if args.analysis_session:
+                from .OptionFrames import guard_option_orders
+                guard_option_orders(context,kind,check_frame,set(codes+hedges))
             engine.run(False)
         finally:
             engine.release()

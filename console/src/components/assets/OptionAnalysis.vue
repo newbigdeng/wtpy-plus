@@ -9,6 +9,7 @@
     <form @submit.prevent="start">
       <label>估值模型<select v-model="model"><option value="american">美式期货期权（BAW 近似）</option><option value="black76">欧洲式 Black-76 参考</option></select></label>
       <label>年利率 %<input v-model.number="rate" required type="number" min="0" max="50" step="any"></label>
+      <label>独立估值波动率 %<input v-model.number="scenarioVol" type="number" min="0.01" max="500" step="any" placeholder="可选，自行假设"></label>
       <button :disabled="!selected.length">开始分析</button><button v-if="running" type="button" @click="stop">停止分析</button>
     </form>
     <details><summary>曲面查询与 Kirk 跨品种价差</summary>
@@ -27,6 +28,10 @@
       <div class="scroll"><table><thead><tr><th>合约</th><th>试算手数</th><th>期权中价</th><th>期货中价</th><th>IV</th><th>Delta</th><th>Gamma</th><th>Theta</th><th>Vega</th><th>Rho</th><th>源端时间 / 状态</th></tr></thead>
         <tbody><tr v-for="r in frame.rows" :key="r.symbol"><td>{{r.symbol}}</td><td><input class="lots" type="number" step="1" v-model.number="lots[r.symbol]" :aria-label="r.symbol+' 试算手数'" placeholder="0"></td><td>{{n(r.premium)}}</td><td>{{n(r.forward)}}</td><td>{{pct(r.iv)}}</td>
           <td>{{n(r.delta,4)}}</td><td>{{n(r.gamma,6)}}</td><td>{{n(r.theta,4)}}</td><td>{{n(r.vega,4)}}</td><td>{{n(r.rho,4)}}</td><td>{{r.reason || r.source_time}}</td></tr></tbody></table></div>
+      <div v-if="scenarioVol" class="scroll"><h4>按假设波动率估价</h4>
+        <p>买入比较卖一价，卖出比较买一价。差额按报价单位显示，未扣手续费。</p>
+        <table><thead><tr><th>合约</th><th>假设价格</th><th>假设价格 − 卖一</th><th>买一 − 假设价格</th></tr></thead>
+          <tbody><tr v-for="r in frame.rows" :key="r.symbol"><td>{{r.symbol}}</td><td>{{n(r.scenario_price)}}</td><td>{{n(r.scenario_price==null?null:r.scenario_price-r.ask)}}</td><td>{{n(r.scenario_price==null?null:r.bid-r.scenario_price)}}</td></tr></tbody></table></div>
       <div v-if="risk.length"><h4>按标的试算敞口</h4><p>多头用正手数，空头用负手数。每项按合约乘数折算。</p>
         <div v-for="r in risk" :key="r.underlying">{{r.underlying}} · <span v-if="r.missing">等待有效报价、整数手数及合约乘数</span>
           <span v-else>Delta {{n(r.delta)}} · Gamma {{n(r.gamma,4)}} · Theta {{n(r.theta)}} · Vega {{n(r.vega)}} · Rho {{n(r.rho)}}</span></div></div>
@@ -58,6 +63,7 @@ import OptionCurve from './OptionCurve.vue'
 const props=defineProps({selected:Array,mode:String})
 const emit=defineEmits(['clear','remove','analyze'])
 const model=ref('american'),rate=ref(2),strike=ref(null),expiry=ref(''),first=ref(''),second=ref('')
+const scenarioVol=ref('')
 const ratio=ref(1),rho=ref(0),spreadStrike=ref(0)
 const frame=ref(null),running=ref(false),status=ref('')
 const chains=computed(()=>[...new Set(props.selected.map(s=>s.underlying))].map(underlying=>({
@@ -83,7 +89,7 @@ function stop(){
   controller?.abort();controller=null;running.value=false;resume=false;frame.value=null;status.value=''
 }
 defineExpose({stop})
-watch([()=>props.selected,()=>props.mode,model,rate,strike,expiry,first,second,ratio,rho,spreadStrike],stop)
+watch([()=>props.selected,()=>props.mode,model,rate,scenarioVol,strike,expiry,first,second,ratio,rho,spreadStrike],stop)
 function terms(product){
   return Object.entries(frame.value.summaries).flatMap(([key,values])=>{
     const row=frame.value.rows.find(r=>r.underlying===key && r.product===product && r.iv!=null)
@@ -102,6 +108,7 @@ async function start(){
   const c=new AbortController();controller=c;running.value=true;status.value='连接自选行情…'
   try{
     const body={chains:chains.value,mode:props.mode,model:model.value,rate:rate.value/100}
+    if(scenarioVol.value!=='')body.scenario_vol=scenarioVol.value/100
     if(expiry.value)body.query={date:Number(expiry.value.replaceAll('-','')),strike:strike.value}
     if(first.value)body.spread={first:first.value,second:second.value,ratio:ratio.value,strike:spreadStrike.value,correlation:rho.value}
     const res=await fetch('/mgr/assets/option/analysis',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:c.signal})
