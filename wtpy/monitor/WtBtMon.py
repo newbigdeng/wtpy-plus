@@ -13,6 +13,7 @@ import time
 import logging
 import tempfile
 import csv
+from pathlib import Path
 
 from wtpy import WtDtServo
 from .WtLogger import WtLogger
@@ -652,7 +653,7 @@ class WtBtMon(BtTaskSink):
 
     def run_backtest(self, user:str, straid:str, fromTime:int, endTime:int, capital:float, slippage:int=0,
                      fill_model:str="causal_touch", event_delay:int=0, participation_rate:float=0,
-                     risk=None, dataset=None, *, catalog=None, companions=()) -> dict:
+                     risk=None, dataset=None, *, catalog=None, companions=(), fee_per_lot=None) -> dict:
         from ..wrapper.WtBtWrapper import validate_cta_fill_config
         validate_cta_fill_config(fill_model, event_delay, participation_rate)
         with self._lock:
@@ -683,6 +684,13 @@ class WtBtMon(BtTaskSink):
                 from .HistoryCatalog import prepare_native_dataset
                 data_meta = prepare_native_dataset(os.environ.get("WT_PLUS_WORKSPACE", "/workspace"),
                                                   dataset, fromTime, endTime, folder, catalog=catalog, companions=companions)
+                if fee_per_lot is not None:
+                    fees = {row["product"]:dict(open=fee_per_lot,close=fee_per_lot,closetoday=fee_per_lot,byvolume=True)
+                            for row in catalog if row["id"] in {dataset,*companions}}
+                    fee_file = Path(folder)/"market-base"/"scenario-fees.json"
+                    fee_file.write_text(json.dumps(fees),encoding="utf-8")
+                    data_meta["basefiles"]["fee"] = str(fee_file)
+                    data_meta["fee_per_lot"] = fee_per_lot
                 if strategy_type == "hft" and not data_meta["tick_enabled"]:
                     raise ValueError("HFT回测需要真实Tick；不能将K线合成事件冒充真实Tick")
                 if not data_meta["tick_enabled"] and strategy_type == "cta" and fill_model != "legacy_cta":

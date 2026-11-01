@@ -20,7 +20,7 @@ from starlette.responses import StreamingResponse
 from .AssetMarkets import ASSETS, asset_root, inside, instrument
 from .AssetQuotes import http_quote
 from . import CollectorControl
-from .HistoryCatalog import dataset_entries, public_dataset, selection_bounds
+from .HistoryCatalog import dataset_entries, public_dataset, selection_bounds, native_worker
 from .Roles import can_read, can_admin, can_research_read
 from .StrategyLibrary import register_library_routes
 from .WtBtMon import WtBtMon
@@ -296,7 +296,9 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
     @app.post("/mgr/assets/{asset}/run")
     def run(request: Request, asset: str, library_id: str = Body(...), version: int = Body(...),
             dataset: str = Body(...), start: str = Body(...), end: str = Body(...),
-            capital: float = Body(..., gt=0, le=1e12), companions: list[str] = Body(default=[],max_length=12)):
+            capital: float = Body(..., gt=0, le=1e12), companions: list[str] = Body(default=[],max_length=12),
+            fill_model: str | None = Body(None), event_delay: int = Body(0,ge=0,le=1000),
+            participation_rate: float = Body(0,ge=0,le=1), fee_per_lot: float | None = Body(None,ge=0,le=1e5)):
         user, error = authorize(request, asset, research=True)
         if error:
             return error
@@ -311,7 +313,9 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
             selection_bounds(item, begin, finish)
             if item["period"] == "trades":
                 raise ValueError("成交记录无买卖盘口，请选择分钟线回测")
-            if "fee" not in item["basefiles_map"] or not all(Path(f).is_file() for f in item["basefiles_map"].values()):
+            if fee_per_lot is not None and asset!="option":
+                raise ValueError("按手试算手续费仅用于期权工作区")
+            if ("fee" not in item["basefiles_map"] and fee_per_lot is None) or not all(Path(f).is_file() for f in item["basefiles_map"].values()):
                 raise ValueError("请补齐该资产的合约、交易时段、交易日历与费用文件")
             source = libraries[asset].get(library_id, version, allow_archived=False)
             kind = source["engine_type"].lower()
@@ -327,26 +331,62 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
                 raise ValueError("多合约期权回放需要接受 codes 参数的策略")
             by_id = {row["id"]:row for row in catalog}
             if asset == "option":
+                if item.get("leg_type")!="option":
+                    raise ValueError("主数据集须为商品期权")
+                if len({dataset,*companions})!=1+len(companions):
+                    raise ValueError("请勿重复选择同一条腿")
+                shared_days = set(item["dates"])
+                underlyings = {by_id[k]["underlying"] for k in (dataset,*companions) if k in by_id and by_id[k].get("leg_type")=="option"}
                 for leg_id in (dataset,*companions):
                     leg = by_id.get(leg_id)
                     if not leg or "." in leg["ticker"]:
                         raise ValueError("请选择本期权工作区的整数行权价合约")
+                    if leg["leg_type"]=="future" and leg["underlying"] not in underlyings:
+                        raise ValueError("期货腿须是已选期权的标的")
+                    shared_days.intersection_update(leg["dates"])
                     if not leg.get("expiry") or finish>=leg["expiry"]:
                         raise ValueError("回放须在所有选中期权的到期日前结束")
+                if not any(begin<=day<=finish for day in shared_days):
+                    raise ValueError("所选日期内没有各腿共同记录的交易日")
+            fill = "legacy_cta" if kind == "cta" and item["period"] != "tick" else "causal_touch"
+            if fill_model is not None or event_delay or participation_rate:
+                if asset!="option" or kind!="cta" or item["period"]!="tick" or fill_model not in ("causal_touch","volume_limited"):
+                    raise ValueError("盘口设置只适用于商品期权 CTA Tick 回测")
+                fill = fill_model
             monitor, owner = get_monitor(asset), user["loginid"]
             with lock:
                 straid = monitor.add_strategy(owner, source["name"] + " v" + str(version), kind)["id"]
                 try:
                     if not monitor.set_strategy_code(owner, straid, source["source"]):
                         raise ValueError("策略副本写入失败")
-                    fill = "legacy_cta" if kind == "cta" and item["period"] != "tick" else "causal_touch"
                     task = monitor.run_backtest(owner, straid, begin * 10000, finish * 10000 + 2359,
-                                                capital, fill_model=fill, dataset=dataset, catalog=catalog, companions=companions)
+                                                capital, fill_model=fill, event_delay=event_delay, participation_rate=participation_rate,
+                                                dataset=dataset, catalog=catalog, companions=companions, fee_per_lot=fee_per_lot)
                 except Exception:
                     monitor.del_strategy(owner, straid)
                     raise
             return {"result": 0, "task": task}
         except (ValueError, OSError) as exc:
             return {"result": -2, "message": str(exc) if isinstance(exc, ValueError) else "回测工作区无法读写"}
+
+    @app.post("/mgr/assets/option/replay-risk")
+    def replay_risk(request: Request, strategy: str=Body(...), task: str=Body(...), day: str=Body(...), rate: float=Body(.02,ge=0,le=.5)):
+        user,error=authorize(request,"option",research=True)
+        if error:return error
+        monitor,owner=get_monitor("option"),user["loginid"]
+        if not any(s["id"]==strategy for s in monitor.get_strategies(owner)):
+            return {"result":-2,"message":"本账户没有该策略"}
+        row=next((r for r in monitor.get_backtests(owner,strategy) or [] if r["id"]==task),None)
+        legs=(row or {}).get("dataset") or {}
+        if not legs.get("option_legs") or row["status"]=="running":
+            return {"result":-2,"message":"请选择含期权合约资料的已结束任务"}
+        try:
+            date=int(datetime.strptime(day,"%Y-%m-%d").strftime("%Y%m%d"))
+            folder=Path(monitor.path)/owner/strategy/"backtests"/task
+            report=native_worker(dict(action="option_replay_risk",folder=str(folder),task=task,
+                                      legs=legs["option_legs"],day=date,rate=rate))
+            return {"result":0,**report}
+        except (OSError,ValueError,TimeoutError) as exc:
+            return {"result":-2,"message":str(exc)}
 
     return monitors

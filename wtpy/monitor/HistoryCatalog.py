@@ -99,14 +99,18 @@ def dataset_entries(workspace="/workspace", manifest_path=None, refresh=False, *
         base = {key: str(_inside(root, folder, value)) for key, value in config.get("basefiles", {}).items()
                 if key != "utf-8" and isinstance(value, str) and "," not in value}
         contracts = _load(Path(base["contract"]))
+        products = _load(Path(base["commodity"])) if asset=="option" else {}
         common = Path(base["contract"]).parent
         for key, name in (("hot","hots.json"), ("fee","fees.json")):
             if (common/name).is_file():
                 base[key] = str(_inside(root, common, name))
         for exchange, rows in contracts.items():
+            underlyings = {c["option"]["underlying"] for c in rows.values() if c.get("option") and c["option"].get("underlying")} if asset=="option" else set()
             for ticker, info in rows.items():
                 product = info.get("product", "")
                 code = dataset_code(asset, exchange, ticker, info)
+                if not code and ticker in underlyings:
+                    code = dataset_code("futures", exchange, ticker, info)
                 if not code:
                     continue
                 for period, directory in (("tick","ticks"),("m1","min1"),("m5","min5"),("d","day")):
@@ -137,6 +141,10 @@ def dataset_entries(workspace="/workspace", manifest_path=None, refresh=False, *
                         model="recorded_tick" if period == "tick" else "closed_bar_only")
                     if asset == "option":
                         item["expiry"] = int(info.get("expiredate") or 0)
+                        opt = info.get("option") or {}
+                        item.update(leg_type="option" if opt else "future", underlying=exchange+"."+opt.get("underlying",ticker),
+                                    side=("C" if re.search(r"\d-?C-?\d",ticker,re.I) else "P") if opt else "",
+                                    strike=opt.get("strikeprice"), multiplier=products.get(exchange,{}).get(product,{}).get("volscale"))
                     entries.append(item)
     return _inspect_many(entries, refresh=refresh)
 
@@ -162,6 +170,10 @@ def selection_bounds(item, start, end):
 def prepare_native_dataset(workspace, dataset, start, end, taskfolder, catalog=None, companions=()):
     with channel_transition_lock:
         result = _prepare_native_dataset(workspace, dataset, start, end, taskfolder, catalog)
+        if catalog:
+            chosen = [row for row in catalog if row["id"] in {dataset,*companions} and row.get("leg_type")]
+            if chosen:
+                result["option_legs"] = [{k:row[k] for k in ("code","period","exchange","ticker","leg_type","underlying","expiry","strike","side","multiplier")} for row in chosen]
         if companions:
             legs = [dict(code=result["code"],period=result["period"],dataset=dataset)]
             primary = next(row for row in catalog if row["id"]==dataset)

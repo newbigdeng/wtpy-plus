@@ -121,6 +121,9 @@ def merge(payload, helper):
 
 
 def run(payload):
+    if payload["action"] == "option_replay_risk":
+        from wtpy.monitor.OptionReplayRisk import report
+        return report(payload)
     if payload["action"] == "crypto_bars":
         from wtpy.monitor.CryptoArchive import replay_bars
         period, ticker = payload["period"], payload["ticker"]
