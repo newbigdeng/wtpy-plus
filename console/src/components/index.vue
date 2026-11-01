@@ -35,7 +35,7 @@
             </nav>
             <main class="wt-workspace" :class="'workspace-'+$route.path.slice(1)">
                 <AssetQuote v-if="externalQuotes" :key="asset" :asset="asset"/>
-                <AssetResearch v-else-if="asset!=='futures' && $route.path==='/history'" :key="asset" :asset="asset" :name="assetNames[asset]"/>
+                <AssetHistory v-else-if="asset!=='futures' && $route.path==='/history'" :key="asset" :asset="asset" :name="assetNames[asset]"/>
                 <router-view v-else :key="isAssetPage?asset:undefined" @notify="handleNotify"/>
             </main>
             <footer class="wt-statusbar"><strong>WT / TERMINAL</strong><span>{{roleName}}</span><span>行情、研究与交易状态独立核对</span><time>{{terminalClock}} CST</time></footer>
@@ -97,7 +97,7 @@
 
 <script>
 import AssetQuote from './assets/AssetQuote.vue';
-import AssetResearch from './assets/AssetResearch.vue';
+import AssetHistory from './history/AssetHistory.vue';
 import WtIcon from './common/WtIcon.vue';
 import ProcessControl from './common/ProcessControl.vue';
 import { themeState, setTheme } from '@/js/theme.js';
@@ -150,7 +150,7 @@ export default {
                 return false;        
         }
     },
-    components:{ WtIcon,ProcessControl,AssetQuote,AssetResearch },
+    components:{ WtIcon,ProcessControl,AssetQuote,AssetHistory },
     data () {
         return {
            assetNames:{stock:'股票',futures:'期货',option:'期权',crypto:'加密货币'},

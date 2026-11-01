@@ -12,7 +12,7 @@
     <div class="content">
     <header v-if="backtest"><div><small>RESEARCH / BACKTEST</small><h1>{{selected?.name || name+'策略回测'}}</h1></div>
       <router-link :to="{path:'/api-manual',query:{type:selected?.engine_type?.toLowerCase() || 'cta'}}" target="_blank">策略 API 手册 ↗</router-link></header>
-    <template v-else><h2>本地历史数据 · {{name}}</h2><button @click="load">刷新</button></template>
+
     <p v-if="message" role="status">{{message}}</p>
     <template v-if="backtest">
       <p>{{tips[asset]}}</p>
@@ -75,12 +75,7 @@
         </section>
       </section></section>
     </template>
-    <template v-else>
-      <p v-if="!datasets.length">这里仅显示本资产采集器已经写入的行情。</p>
-      <p v-if="asset==='crypto' && datasets.length">逐笔按成交编号去重。分钟数含首尾时段，回放只使用完整分钟。</p>
-      <table v-if="datasets.length"><thead><tr><th>合约</th><th>周期</th><th>记录数</th><th>首条</th><th>末条</th></tr></thead>
-      <tbody><tr v-for="d in datasets" :key="d.id"><td>{{d.code}}</td><td>{{d.period}}</td><td>{{d.rows}}</td><td>{{d.start}}</td><td>{{d.end}}</td></tr></tbody></table>
-    </template>
+
     </div>
   </section>
 </template>
