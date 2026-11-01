@@ -50,7 +50,9 @@ def dataset_code(asset, exchange, ticker, info):
         product = info.get("product", "")
         if not product or not ticker.startswith(product) or "option" in info:
             return None
-        return exchange + "." + product + "." + ticker[len(product):]
+        from wtpy.ContractCodes import contract_standard_code
+        try:return contract_standard_code(exchange,ticker,info)
+        except ValueError:return None
     try:
         instrument(asset, ticker if asset == "crypto" else exchange + "." + ticker)
     except ValueError:

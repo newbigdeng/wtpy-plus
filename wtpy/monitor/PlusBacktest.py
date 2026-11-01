@@ -157,8 +157,8 @@ class PlusBacktestManager:
         capital = float(capital)
         if not math.isfinite(capital) or capital <= 0 or capital > 1e12:
             raise ValueError("初始资金必须为有效正数且不超过1万亿")
-        if not re.fullmatch(r"m[1-9][0-9]{0,3}", str(period)):
-            raise ValueError("Plus当前支持分钟线周期，如m1、m5")
+        if period!="d1" and not re.fullmatch(r"m[1-9][0-9]{0,3}", str(period)):
+            raise ValueError("请选择分钟周期或 d1 日线")
         params = params or {}
         if not isinstance(params, dict) or any(not isinstance(k, str) or k.startswith("_") or k in ("name","code","period","capital") for k in params):
             raise ValueError("构造参数必须为公开参数字典，不能覆盖name/code/period/capital")

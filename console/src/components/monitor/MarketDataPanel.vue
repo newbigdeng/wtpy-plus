@@ -6,12 +6,13 @@
     </header>
 
     <el-alert v-if="subscriptionError" :title="subscriptionError" type="error" :closable="false"/>
+    <MainReplayPanel preview :symbol="historyCode" @calendar="mainCalendar=$event" @select-interval="selectMain"/>
     <article class="market-card">
       <div class="card-heading"><div><h3>历史行情补数</h3><p>CNEquity 先查数据湖，缺失时采集可获取的行情，再补充到 WT。</p></div><div class="history-actions"><el-button size="small" :loading="permissionsLoading" :disabled="!subscriptions?.can_manage" @click="loadProviders(true)">检查数据源</el-button><el-button link @click="openTerminal">返回看盘</el-button></div></div>
       <el-alert v-if="historyError" :title="historyError" type="error" :closable="false" show-icon/>
       <div class="backfill-form">
         <label>数据平台<el-select v-model="provider" placeholder="选择数据平台" aria-label="补数平台" @change="providerChanged"><el-option v-for="item in providers" :key="item.id" :value="item.id" :label="item.label"/></el-select></label>
-        <label>具体合约<el-select-v2 v-model="historyCode" filterable :options="historyContractOptions" placeholder="选择合约" aria-label="历史补数合约" @change="clearCoverage"/></label>
+        <label>具体合约<el-select-v2 v-model="historyCode" filterable :options="historyContractOptions" placeholder="选择合约" aria-label="历史补数合约" @change="clearCoverage"><template #default="{item}"><span :style="item.main?{color:'var(--wt-success)',fontWeight:600}:{}">{{item.label}}</span></template></el-select-v2></label>
         <label>数据频率<el-select v-model="period" aria-label="补数数据频率" @change="clearCoverage"><el-option v-for="item in periods" :key="item.value" :value="item.value" :label="frequencyLabel(item)"/></el-select></label>
         <label class="date-field">日期范围<el-date-picker v-model="dates" type="daterange" value-format="YYYYMMDD" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" aria-label="历史补数日期范围" @change="clearCoverage"/></label>
       </div>
@@ -52,23 +53,27 @@
 </template>
 
 <script>
+import MainReplayPanel from '../backtest/MainReplayPanel.vue'
 const dayString = value => {
   const date = new Date(value);
   return String(date.getFullYear()) + String(date.getMonth() + 1).padStart(2, '0') + String(date.getDate()).padStart(2, '0');
 };
 export default {
-  name: 'MarketDataPanel',
+  name: 'MarketDataPanel', components:{MainReplayPanel},
   props: { groupid: { type: String, required: true } },
 
   data: () => ({
-    subscriptions: null, subscriptionError: '', loading: false,
+    mainCalendar:null, subscriptions: null, subscriptionError: '', loading: false,
     providers: [], provider: '', permissionsLoading: false, historyCode: '', period: 'd', dates: [dayString(Date.now() - 7 * 86400000), dayString(Date.now())],
     canBackfill: false, canPrepareLake: false, backfillReason: '', allowBackfillRestart: false, historyError: '', coverage: null, checking: false, submitting: false,
     jobs: [], jobsError: '', jobsLoading: false, poll: null, disposed: false
   }),
   computed: {
     catalog() { return this.subscriptions?.catalog || []; },
-    historyContractOptions() { return this.catalog.map(item => ({ value: item.code, label: item.name + ' · ' + item.code })); },
+    historyContractOptions() { return this.catalog.map(item=>{
+        const s=this.mainCalendar?.segments.find(s=>this.matchesMain(item,s))
+        return {value:item.code,label:item.name+' · '+item.code+(s?' · 主力 '+s.start+'—'+s.end:''),main:!!s}
+      }); },
     currentProvider() { return this.providers.find(item => item.id === this.provider); },
     periods() {
       return [{ value: 'd', label: '日线' }, { value: 'm1', label: '1 分钟' }, { value: 'm5', label: '5 分钟' }].map(item => ({ ...item, available: false, ...this.currentProvider?.periods?.find(period => period.value === item.value) }));
@@ -77,6 +82,8 @@ export default {
     validHistory() { return Boolean(this.historyCode && this.period && this.dates?.length === 2); }
   },
   methods: {
+    matchesMain(item,s){const ex=this.mainCalendar?.product?.split('.')[0],prod=this.mainCalendar?.product?.split('.')[1];return item.exchange===ex && item.product===prod && (item.code===ex+'.'+prod+'.'+s.month || item.ticker===prod+(ex==='CZCE'?s.month.slice(1):s.month))},
+    selectMain({product,segment}){this.dates=[segment.start,segment.end];const item=this.catalog.find(x=>this.matchesMain(x,segment));if(item)this.historyCode=item.code;else this.historyError=product+'.'+segment.month+' 不在当前中台的可写合约表中';this.clearCoverage()},
     async request(path, body = {}) {
       const response = await fetch('/mgr/market/' + path, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ groupid: this.groupid, ...body }) });
       const result = await response.json();

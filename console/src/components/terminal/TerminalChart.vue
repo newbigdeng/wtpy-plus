@@ -9,10 +9,11 @@ function draw(){
  if(!chart)return
  const style=getComputedStyle(document.documentElement),color=style.getPropertyValue('--wt-muted').trim(),accent=style.getPropertyValue('--wt-accent').trim(),line=style.getPropertyValue('--wt-line').trim()
  const option=props.graph?{tooltip:{renderMode:'richText'},series:[{type:'graph',layout:'force',roam:true,label:{show:true,color,fontSize:11},data:props.graph.nodes,links:props.graph.edges,lineStyle:{color:accent,opacity:.4},itemStyle:{color:accent},force:{repulsion:180,edgeLength:90}}]}:
- {grid:{top:25,left:65,right:22,bottom:45},tooltip:{trigger:'axis',renderMode:'richText'},xAxis:{type:'category',data:props.series.map(r=>String(r.time)),axisLabel:{color},axisLine:{lineStyle:{color:line}}},yAxis:{type:'value',scale:true,axisLabel:{color},splitLine:{lineStyle:{color:line}}},dataZoom:[{type:'inside'}],series:[{type:'line',showSymbol:false,data:props.series.map(r=>r.value),lineStyle:{color:accent,width:1.7},areaStyle:{color:accent,opacity:.08}}]}
+ {grid:{top:25,left:65,right:22,bottom:45},tooltip:{trigger:'axis',renderMode:'richText'},xAxis:{type:'category',data:props.series.map(r=>String(r.time)),axisLabel:{color},axisLine:{lineStyle:{color:line}}},yAxis:{type:'value',scale:true,axisLabel:{color},splitLine:{lineStyle:{color:line}}},dataZoom:[{type:'inside'}],series:[{type:'line',showSymbol:props.series.length===1,symbolSize:7,data:props.series.map(r=>r.value),lineStyle:{color:accent,width:1.7},areaStyle:{color:accent,opacity:.08}}]}
  if(props.plot){
    option.xAxis.data=props.plot.labels
-   option.series=props.plot.series.map(s=>({type:'line',showSymbol:false,sampling:'lttb',...s}))
+   option.series=props.plot.series.map(s=>({type:'line',showSymbol:s.data?.length===1 || s.data?.some(v=>v==null),symbolSize:7,sampling:'lttb',...s}))
+   if(!option.series.some(s=>s.data?.some(v=>v!=null)))option.graphic={type:'text',left:'center',top:'middle',style:{text:'本区间没有可绘制的观测值',fill:color}}
    option.legend={textStyle:{color},top:0}
    option.grid.top=38
    Object.assign(option.yAxis,props.plot.axis || {})

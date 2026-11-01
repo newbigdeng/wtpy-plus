@@ -2,7 +2,7 @@
  <section class="wt-plus-research">
   <div class="plus-heading"><div><h2>Plus 仿真回测</h2><p>历史行情驱动实盘链路，检查策略、执行和回报是否衔接。</p></div><el-button :loading="loading" @click="refresh">刷新任务</el-button></div>
   <div class="plus-path" aria-label="Plus 回测执行链路"><span>历史 Tick</span><b>→</b><span>{{engineType.toUpperCase()}} 实盘引擎</span><b>→</b><span>{{engineType.toLowerCase()==='cta'?'执行器':'策略委托'}}</span><b>→</b><span>TraderAdapter</span><b>→</b><span>TraderMocker</span></div>
-  <el-alert title="Plus 使用隔离的本地模拟柜台。无需连接 SimNow，休市也可回放。输入需为 Tick；分钟线、日线请选原生 CTA 回测。" type="info" :closable="false" show-icon/>
+  <el-alert title="Plus 使用隔离的本地模拟柜台。无需连接 SimNow，休市也可回放。真实 Tick 撮合可配合 15 分钟或日线策略；只有 K 线时可用下方品种连续回测。" type="info" :closable="false" show-icon/>
   <el-alert v-if="unsupported" :title="unsupported" type="warning" :closable="false"/>
   <el-form label-position="top" class="plus-config" :disabled="launching" @submit.prevent="launch">
    <el-form-item label="历史数据集"><el-select v-model="config.dataset" aria-label="Plus历史数据集" :disabled="launching" @change="selectDataset"><el-option v-for="item in capabilities.datasets||[]" :key="item.id" :value="item.id" :label="item.label"/></el-select></el-form-item>
@@ -10,7 +10,7 @@
    <el-form-item label="开始时间"><el-date-picker v-model="config.start" type="datetime" value-format="YYYYMMDDHHmm" format="YYYY-MM-DD HH:mm" aria-label="Plus开始时间" placeholder="选择开始时间"/></el-form-item>
    <el-form-item label="结束时间"><el-date-picker v-model="config.end" type="datetime" value-format="YYYYMMDDHHmm" format="YYYY-MM-DD HH:mm" aria-label="Plus结束时间" placeholder="选择结束时间"/></el-form-item>
    <el-form-item label="初始资金"><el-input-number v-model="capitalInput" :min="1" :max="1000000000" :step="10000" aria-label="Plus初始资金"/></el-form-item>
-   <el-form-item label="主K线周期"><el-select v-model="config.period" aria-label="Plus周期"><el-option label="1分钟" value="m1"/><el-option label="5分钟" value="m5"/></el-select></el-form-item>
+   <el-form-item label="主K线周期"><el-select v-model="config.period" aria-label="Plus周期"><el-option label="1分钟" value="m1"/><el-option label="5分钟" value="m5"/><el-option label="15分钟" value="m15"/><el-option v-if="engineType.toLowerCase()==='cta'" label="日线" value="d1"/></el-select></el-form-item>
    <el-form-item class="plus-parameters" label="策略构造参数（JSON）"><el-input v-model="paramsText" type="textarea" :rows="2" aria-label="Plus策略构造参数" placeholder="{}"/><small>留空对象会沿用保存源码的默认值，不会自动读取模拟盘已应用参数。</small></el-form-item>
    <el-form-item v-if="engineType.toLowerCase()==='cta'" label="CTA 执行器"><el-select v-model="execution.id" aria-label="Plus执行策略" @change="resetExecution"><el-option v-for="item in capabilities.executors||[]" :key="item.id" :value="item.id" :label="item.label"/></el-select><small>与实盘复用 MinImpact、TWAP、VWAP 执行器。</small></el-form-item>
    <el-form-item v-else label="委托方式"><span class="plus-direct-order">{{engineType.toUpperCase()==='HFT'?'HFT 由策略直接委托，不使用 CTA 执行器。':'当前引擎不支持 Plus 回测。'}}</span></el-form-item>
@@ -28,6 +28,7 @@
    <div class="plus-custom-fees"><RiskSelection v-model="risk" :engine-type="engineType.toUpperCase()"/></div>
    <el-form-item class="plus-launch"><el-button type="success" :loading="launching" :disabled="Boolean(unsupported)||!selectedDataset" @click="launch">保存并运行 Plus</el-button></el-form-item>
   </el-form>
+  <MainReplayPanel v-if="engineType.toLowerCase()==='cta'" :strategy="strategyid" :symbol="selectedDataset?.code" :dataset="config.dataset" :initial-capital="capital" :params="paramsText"/>
   <p class="plus-finance-note" v-if="selectedDataset">{{financeDescription}}</p>
   <p class="plus-dataset-note" v-if="selectedDataset">{{selectedDataset.source}} · {{selectedDataset.ticks||0}} 条真实或明确标注的演示 Tick · 实际覆盖 {{selectedDataset.start}} — {{selectedDataset.end}}。只回放所选区间；没有数据会拒绝启动。Plus 不用 K 线伪造盘口。</p>
   <p class="plus-finance-note">滑点受委托限价与涨跌停限制，实际成本可能小于配置值。保证金按多、空持仓分别累计，不计算锁仓优惠。</p>
@@ -58,7 +59,7 @@
    <pre v-if="ledgerTab==='log'" class="plus-log">{{logText||'暂无日志'}}</pre>
    <pre v-else-if="ledgerTab==='route'" class="plus-log">{{routeText}}</pre>
    <el-table v-else :data="visibleRows" stripe max-height="360" empty-text="本任务暂无该类记录。" class="plus-ledger">
-    <el-table-column v-for="field in columns" :key="field" :prop="field" :label="fieldName(field)" min-width="125" show-overflow-tooltip><template #default="{row}">{{cell(row[field])}}</template></el-table-column>
+    <el-table-column v-for="field in columns" :key="field" :prop="field" :label="fieldName(field)" min-width="125" show-overflow-tooltip><template #default="{row}">{{field==='time'?formatClock(row):cell(row[field])}}</template></el-table-column>
    </el-table>
    <el-pagination v-if="!['log','route'].includes(ledgerTab)&&total(ledgerTab)>200" v-model:current-page="ledgerPage" :page-size="200" :total="total(ledgerTab)" layout="prev, pager, next, total" @current-change="loadDetail"/>
   </section>
@@ -67,12 +68,14 @@
 
 <script>
 import * as echarts from 'echarts'
+import MainReplayPanel from './MainReplayPanel.vue'
+import {reportTime} from './reportReturns'
 import PlusFinanceReport from './PlusFinanceReport.vue'
 import DeleteRun from './DeleteRun.vue'
 import RiskSelection from '@/components/common/RiskSelection.vue'
 const running=task=>['queued','running'].includes(task.status)
 export default {
- name:'PlusResearch',components:{PlusFinanceReport,RiskSelection,DeleteRun},
+ name:'PlusResearch',components:{MainReplayPanel,PlusFinanceReport,RiskSelection,DeleteRun},
  props:{strategyid:{type:String,required:true},engineType:{type:String,default:'cta'},beforeSave:{type:Function,required:true},capital:{type:Number,default:1000000},active:{type:Boolean,default:true},guest:{type:Boolean,default:false}},
  emits:['update:capital','completed'],
  data:()=>({risk:{rules:[]},capabilities:{datasets:[],engines:[],executors:[],limitations:[]},execution:{id:'minimpact',params:{pricemode:1,offset:0,expire:5,span:0,byrate:false,lots:1},weights:''},config:{dataset:'',start:'',end:'',period:'m1'},finance:{feeMode:'dataset',fees:{byvolume:true,open:null,close:null,closetoday:null,minfee:0},marginPercent:null,slippageTicks:0},feeFields:[{key:'open',label:'开仓费率'},{key:'close',label:'平仓费率'},{key:'closetoday',label:'平今费率'},{key:'minfee',label:'每次成交最低费'}],paramsText:'{}',tasks:[],loading:false,launching:false,detail:null,detailLoading:false,ledgerPage:1,ledgerTab:'trades',generation:0,ledgers:[{id:'trades',label:'成交'},{id:'orders',label:'委托'},{id:'positions',label:'持仓'},{id:'funds',label:'资金'},{id:'rejections',label:'拒单'},{id:'risk',label:'风控'},{id:'events',label:'事件'},{id:'route',label:'链路证据'},{id:'log',label:'运行日志'}]}),
@@ -90,7 +93,8 @@ export default {
   equityPoints(){return this.detail?.equity_curve||this.rows('funds').filter(row=>(row.equity??row.balance)!=null&&Number.isFinite(Number(row.equity??row.balance))).map((row,index)=>[String(row.time??row.timestamp??row.date??index),Number(row.equity??row.balance)])}
  },
  methods:{
-  async request(path,payload={}){const response=await fetch('/bt/plus/'+path,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(payload)});const value=await response.json();if(!response.ok||value.result<0)throw new Error(value.message||'Plus请求失败');return value},
+  formatClock(row){return reportTime(row,'plus')},
+  async request(path,payload={}){const response=await fetch(path==='run'?'/mgr/assets/futures/tick-plus-run':'/bt/plus/'+path,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(payload)});const value=await response.json();if(!response.ok||value.result<0)throw new Error(value.message||'Plus请求失败');return value},
   stateName(value){return{queued:'排队中',running:'运行中',completed:'已完成',stopped:'已停止',failed:'失败',interrupted:'已中断'}[value]||value},
   time(value){if(!value)return'—';if(typeof value==='number')return new Date(value<1e12?value*1000:value).toLocaleString();return String(value).replace('T',' ').slice(0,19)},
   cell(value){return value===null||value===undefined?'—':typeof value==='object'?JSON.stringify(value):String(value)},
@@ -125,7 +129,7 @@ export default {
   async stop(task){if(this.guest){this.$message.warning('游客模式不支持操作');return}try{await this.$confirm('停止本次历史回放并保留已生成记录？','停止 Plus 任务',{confirmButtonText:'停止',cancelButtonText:'取消',type:'warning'});await this.request('stop',{taskid:task.id});await this.refresh();if(this.detail?.task?.id===task.id)await this.loadDetail()}catch(error){if(error instanceof Error)this.$message.error(error.message)}},
   closeDetail(){this._equity?.dispose();this._equity=null;this.detail=null},
   deleted(id){if(this.detail?.task?.id===id)this.closeDetail();this.refresh()},
-  drawEquity(){const node=this.$refs.equityChart;if(!node||!this.equityPoints.length)return;this._equity??=echarts.init(node);const colour=getComputedStyle(document.documentElement).getPropertyValue('--wt-text').trim(),line=getComputedStyle(document.documentElement).getPropertyValue('--wt-success').trim();this._equity.setOption({animation:false,tooltip:{trigger:'axis'},grid:{left:85,right:30,top:20,bottom:35},xAxis:{type:'category',data:this.equityPoints.map(item=>item[0]),axisLabel:{color:colour}},yAxis:{type:'value',scale:true,axisLabel:{color:colour}},series:[{type:'line',showSymbol:false,data:this.equityPoints.map(item=>item[1]),lineStyle:{color:line,width:1.5}}]});this._equity.resize()}
+  drawEquity(){const node=this.$refs.equityChart;if(!node||!this.equityPoints.length)return;this._equity??=echarts.init(node);const colour=getComputedStyle(document.documentElement).getPropertyValue('--wt-text').trim(),line=getComputedStyle(document.documentElement).getPropertyValue('--wt-success').trim();this._equity.setOption({animation:false,tooltip:{trigger:'axis'},grid:{left:85,right:30,top:20,bottom:35},xAxis:{type:'category',data:this.equityPoints.map(item=>item[0]),axisLabel:{color:colour}},yAxis:{type:'value',scale:true,axisLabel:{color:colour}},series:[{type:'line',showSymbol:this.equityPoints.length===1,symbolSize:7,data:this.equityPoints.map(item=>item[1]),lineStyle:{color:line,width:1.5}}]});this._equity.resize()}
  },
  watch:{strategyid(){++this.generation;this.closeDetail();this.tasks=[];this._tasksLoaded=false;this.refresh()},active(value){if(value)this.$nextTick(this.drawEquity)}},
  async mounted(){try{const value=await this.request('capabilities');if(this._disposed)return;this.capabilities=value;this.config.dataset=value.datasets?.[0]?.id||'';this.selectDataset()}catch(error){if(!this._disposed)this.$message.error(error.message)}if(this._disposed)return;await this.refresh();if(this._disposed)return;this._poll=setInterval(()=>{if(this.tasks.some(running)){this.refresh();if(this.detail?.task&&running(this.detail.task))this.loadDetail()}},1500);this._resize=()=>this._equity?.resize();window.addEventListener('resize',this._resize);this._theme=new MutationObserver(()=>this.drawEquity());this._theme.observe(document.documentElement,{attributes:true,attributeFilter:['data-wt-theme']})},

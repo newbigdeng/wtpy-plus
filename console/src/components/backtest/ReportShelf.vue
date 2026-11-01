@@ -25,10 +25,10 @@ import {ref,computed,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
 import DeleteRun from './DeleteRun.vue'
 const names={futures:'期货',stock:'股票',option:'商品期权',crypto:'加密货币'}
-const types={native:'原生策略',plus:'Plus 仿真',research:'研究实验',expiry:'跨期清算'}
+const types={native:'原生策略',plus:'Plus 仿真',research:'研究实验',expiry:'跨期清算',main:'品种连续回测'}
 const states={completed:'已完成',running:'运行中',failed:'失败',interrupted:'已中断',queued:'排队中',stopped:'已停止'}
 const route=useRoute(),router=useRouter(),asset=computed(()=>Object.hasOwn(names,route.query.asset)?route.query.asset:'futures')
-const sources=computed(()=>asset.value==='futures'?['native','plus','research']:asset.value==='option'?['native','expiry']:['native'])
+const sources=computed(()=>asset.value==='futures'?['native','plus','research','main']:asset.value==='option'?['native','expiry','main']:['native'])
 const mode=computed(()=>sources.value.includes(route.query.mode)?route.query.mode:'all')
 const strategies=ref([]),rows=ref([]),busy=ref(false),error=ref('')
 const search=computed({
@@ -52,6 +52,8 @@ async function load(){
       if(token===generation)strategies.value=ss
       list=(await Promise.all(ss.filter(s=>!pick || pick===s.id).map(async s=>
         (await post('/bt/qrystrabts',{straid:s.id})).backtests.map(r=>({...r,title:s.name,straid:s.id}))))).flat()
+    }else if(m==='main'){
+      list=(await post('/mgr/assets/'+a+'/main-list')).runs.filter(r=>!r.preview&&!r.plus_id&&(!pick||r.strategy===pick)).map(r=>({...r,title:r.strategy,straid:r.strategy,code:r.product}))
     }else if(m==='plus'){
       list=(await post('/bt/plus/list')).tasks.map(r=>({...r,title:r.label||r.straid}))
     }else if(m==='research'){

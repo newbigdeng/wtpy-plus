@@ -16,6 +16,7 @@
       <div class="scroll"><table><thead><tr><th>合约</th><th>成交笔数</th><th>买入手数</th><th>卖出手数</th><th>手续费（元）</th><th>期末净仓（手）</th></tr></thead>
         <tbody><tr v-for="leg in report.legs.legs" :key="leg.code"><td>{{leg.code}}</td><td>{{leg.trades}}</td><td>{{leg.buys}}</td><td>{{leg.sells}}</td><td>{{fmt(leg.fee)}}</td><td>{{leg.position}}</td></tr></tbody></table></div>
     </section>
+    <section v-if="report.segments?.length"><h2>实际主力区间</h2><p v-for="s in report.segments" :key="s.start">{{s.start}} — {{s.end}} · {{s.code || s.month}} · 生效后复权系数 {{fmt(s.factor)}}</p></section>
     <h2>{{hasEquity?'资金曲线':'累计净盈亏曲线'}}</h2>
     <TerminalChart v-if="points.length" class="chart" :plot="equityPlot" label="回测资金曲线"/><p v-else>该任务没有可用的资金记录。</p>
     <p>{{note}}</p>
@@ -26,9 +27,10 @@
     <p v-if="total==null">任务未记录成交流水。</p><p v-else-if="!total">账簿中有 0 笔记录。</p>
     <template v-else><p>共 {{total}} 笔 · 第 {{page}} / {{pages}} 页 <small v-if="mode==='research' && total>report.trades.length">研究快照保存前 {{report.trades.length}} 笔</small></p>
       <div class="scroll"><table><thead><tr><th v-for="[key,title] in columns" :key="key">{{title}}</th></tr></thead><tbody>
-        <tr v-for="(row,i) in shown" :key="i"><td v-for="[key] in columns" :key="key">{{row[key] ?? '—'}}</td></tr>
+        <tr v-for="(row,i) in shown" :key="i"><td v-for="[key] in columns" :key="key">{{key==='time'?reportTime(row,mode):row[key] ?? '—'}}</td></tr>
       </tbody></table></div><button :disabled="page<=1 || busy" @click="turn(-1)">上一页</button> <button :disabled="page>=pages || busy" @click="turn(1)">下一页</button>
     </template>
+    <section v-if="report.netPositions"><h2>各合约期末净持仓</h2><p v-for="(qty,code) in report.netPositions" :key="code">{{code}}　{{qty}} 手</p><p v-if="!total">没有成交。</p></section>
     <template v-if="mode==='expiry'"><h2>期末持仓</h2><p v-for="[code,qty] in positions" :key="code">{{code}}　{{qty}} 手</p></template>
   </template>
 </article></template>
@@ -38,13 +40,14 @@ import {useRoute,useRouter} from 'vue-router'
 import DeleteRun from './DeleteRun.vue'
 import {ArrowLeft} from '@element-plus/icons-vue'
 import TerminalChart from '../terminal/TerminalChart.vue'
+import {reportTime,returnsView} from './reportReturns'
 import ReportCandles from './ReportCandles.vue'
 import ReportDiagnostics from './ReportDiagnostics.vue'
 const route=useRoute(),report=ref(null),page=ref(1),busy=ref(false),error=ref('')
 const asset=computed(()=>route.query.asset||'futures'),mode=computed(()=>route.query.mode||'native'),task=computed(()=>route.query.task)
 const router=useRouter(),shelf=computed(()=>({name:'backtest-reports',query:{asset:asset.value,mode:route.query.listMode,strategy:route.query.listStrategy,q:route.query.q}}))
 const assetName=computed(()=>({stock:'股票',option:'商品期权',crypto:'加密货币',futures:'期货'})[asset.value])
-const modeName=computed(()=>({native:'原生策略',plus:'Plus 仿真',research:'研究实验',expiry:'跨期清算'})[mode.value])
+const modeName=computed(()=>({native:'原生策略',plus:'Plus 仿真',research:'研究实验',expiry:'跨期清算',main:'品种连续回测'})[mode.value])
 const strategyName=computed(()=>report.value?.name||route.query.strategy||modeName.value)
 const statusLabel=computed(()=>({completed:'已完成',running:'运行中',failed:'失败',interrupted:'已中断',stopped:'已停止'})[report.value?.status]||report.value?.status)
 async function post(path,body){
@@ -63,9 +66,12 @@ async function load(keepReport=false,targetPage=page.value){
     if(mode.value==='expiry' && asset.value==='option'){
       const {report:r}=await post('/mgr/assets/option/expiry-detail',{run:q.task})
       value={name:r.old+' → '+r.new,status:'completed',capital:r.initial,points:r.daily.map(d=>[d.day,d.equity]),summary:{},trades:r.events,total:r.events.length,fees:r.events.reduce((s,e)=>s+e.fee,0),final:r.final}
+    }else if(mode.value==='main'){
+      const d=await post('/mgr/assets/'+asset.value+'/main-detail',{task:q.task})
+      value={name:d.task.strategy,status:d.task.status,error:d.task.error,capital:d.task.capital,points:d.funds.map(f=>[f.date,d.task.capital+f.dynbalance]),summary:{},trades:d.trades,total:d.trades.length,fees:d.funds.at(-1)?.fee,segments:d.segments,netPositions:d.positions}
     }else if(mode.value==='plus' && asset.value==='futures'){
       const d=await post('/bt/plus/detail',{taskid:q.task,ledger:'trades',offset,limit:100})
-      value={name:d.task.label||d.task.straid,status:d.task.status,error:d.task.error,capital:d.summary?.capital??d.task.capital,points:d.equity_curve||[],summary:d.summary,trades:d.ledger_page?.rows||[],total:d.ledger_totals?.trades,fees:d.summary?.commission}
+      value={name:d.task.label||d.task.straid,status:d.task.status,error:d.task.error,capital:d.summary?.capital??d.task.capital,points:d.equity_curve||[],summary:d.summary,trades:d.ledger_page?.rows||[],total:d.ledger_totals?.trades,fees:d.summary?.commission,segments:groupPlan(d.task.main_plan)}
     }else if(mode.value==='research' && asset.value==='futures'){
       const d=await post('/mgr/research/experiment_detail',{experiment_id:q.task})
       const cap=d.experiment.capital
@@ -92,6 +98,11 @@ async function load(keepReport=false,targetPage=page.value){
   }catch(e){if(id===sequence)error.value=e.message}finally{if(id===sequence)busy.value=false}
 }
 watch(()=>route.fullPath,()=>{page.value=1;load()},{immediate:true})
+function groupPlan(plan=[]){
+  const groups=[]
+  for(const row of plan){if(groups.at(-1)?.code!==row.code)groups.push({...row,start:row.day});groups.at(-1).end=row.day}
+  return groups
+}
 function turn(delta){
   const target=page.value+delta
   if(mode.value==='plus'||(mode.value==='native' && asset.value!=='futures'))load(true,target)
@@ -100,11 +111,11 @@ function turn(delta){
 const capital=computed(()=>report.value?.capital),total=computed(()=>report.value?.total),pages=computed(()=>Math.ceil((mode.value==='research'?report.value?.trades?.length:total.value)/100))
 const points=computed(()=>(report.value?.points||[]).filter(p=>Number.isFinite(p[1])))
 const hasEquity=computed(()=>['plus','expiry'].includes(mode.value)||capital.value!=null)
-const shown=computed(()=>['research','expiry'].includes(mode.value)||(mode.value==='native' && asset.value==='futures')?report.value.trades.slice((page.value-1)*100,page.value*100):report.value.trades)
+const shown=computed(()=>['research','main','expiry'].includes(mode.value)||(mode.value==='native' && asset.value==='futures')?report.value.trades.slice((page.value-1)*100,page.value*100):report.value.trades)
 const equityPlot=computed(()=>({labels:points.value.map(p=>String(p[0])),series:[{name:hasEquity.value?'账户权益':'累计净盈亏',data:points.value.map(p=>p[1])}]}))
 const drawdowns=computed(()=>{let peak=capital.value;return points.value.map(p=>{peak=Math.max(peak,p[1]);return peak>0?(p[1]/peak-1)*100:null})})
 const ddPlot=computed(()=>({labels:equityPlot.value.labels,series:[{name:'回撤 %',data:drawdowns.value}]}))
-const note=computed(()=>({research:'研究任务的资金曲线使用原生日结资金流水。',native:'日结权益取初始资金加累计净盈亏。手续费已计入日结净盈亏。',plus:'资金点来自模拟柜台。长序列保留分段高低点，回撤图按展示点计算。',expiry:'日终权益等于现金余额加期权市值，期货按当日结算价盯市。'})[mode.value])
+const note=computed(()=>({research:'研究任务的资金曲线使用原生日结资金流水。',main:'真实合约成交和手续费计入日结权益。连续信号线使用换月后的复权价格。',native:'日结权益取初始资金加累计净盈亏。手续费已计入日结净盈亏。',plus:'资金点来自模拟柜台。长序列保留分段高低点，回撤图按展示点计算。',expiry:'日终权益等于现金余额加期权市值，期货按当日结算价盯市。'})[mode.value])
 const positions=computed(()=>Object.entries({...report.value.final.options,...report.value.final.futures}))
 function fmt(v,suffix=''){return Number.isFinite(v)?v.toLocaleString('zh-CN',{maximumFractionDigits:2})+suffix:'—'}
 const metrics=computed(()=>{
@@ -112,12 +123,15 @@ const metrics=computed(()=>{
   const ret=s.total_return??(cap>0 && last!=null?(last/cap-1)*100:null)
   const dd=s.max_falldown??(cap>0 && points.value.length?drawdowns.value.reduce((peak,v)=>Math.max(peak,-v),0):null)
   const m=[['初始资金',fmt(cap)],['期末权益',fmt(hasEquity.value?last:null)],['总收益率',fmt(ret,'%')],[mode.value==='plus'?'展示点最大回撤':'最大回撤',fmt(dd,'%')],['累计手续费',fmt(r.fees)]]
-  if(['native','research'].includes(mode.value))m.push(['盈利交易日占比',fmt(s.win_rate,'%')])
+  if(['native','research','main'].includes(mode.value)){
+    const days=returnsView(points.value,cap,252).days
+    m.push(['盈利交易日占比',fmt(days.length?100*days.filter(d=>d.pnl>0).length/days.length:null,'%')])
+  }
   return m
 })
 const columns=computed(()=>mode.value==='expiry'?
  [['day','交易日'],['action','事件'],['code','合约'],['qty','手数'],['price','价格'],['premium','权利金'],['variation','盯市'],['fee','费用'],['cash','现金余额']]:
- [['time','时间'],['code','合约'],['direction','方向'],['offset','开平'],['price','成交价'],['volume','数量'],['fee','费用'],['tag','标签']])
+ [['time','成交时间（北京时间）'],['code','合约'],['direction','方向'],['offset','开平'],['price','成交价'],['volume','数量'],['fee','费用'],['tag','标签']])
 </script>
 <style scoped>
 .run-report{height:100%;overflow:auto;padding:clamp(15px,3vw,40px);box-sizing:border-box;color:var(--wt-text)}

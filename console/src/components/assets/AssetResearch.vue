@@ -16,6 +16,7 @@
     <p v-if="message" role="status">{{message}}</p>
     <template v-if="backtest">
       <p>{{tips[asset]}}</p>
+      <MainReplayPanel v-if="asset==='option'&&selected?.engine_type==='CTA'" asset="option" :strategy="selected.id" :version="selected.version"  :symbol="optionSymbol" :dataset="primary?.period==='tick'?primary.id:''"/>
       <div class="modes" role="group" aria-label="回测工作区视图">
         <button v-for="[id,label] in panels" :key="id" :aria-pressed="panel===id" @click="panel=id">{{label}}</button>
       </div>
@@ -84,6 +85,7 @@
   </section>
 </template>
 <script setup>
+import MainReplayPanel from '../backtest/MainReplayPanel.vue'
 import {computed,ref,onMounted,onUnmounted,watch} from 'vue'
 import OptionExpiry from './OptionExpiry.vue'
 import DeleteRun from '../backtest/DeleteRun.vue'
@@ -110,6 +112,7 @@ const filtered=computed(()=>strategies.value.filter(s=>[s.name,s.id,s.engine_typ
 const mainChoices=computed(()=>datasets.value.filter(d=>d.rows>0 && d.period!=='trades' && (selected.value?.engine_type!=='HFT' || d.period==='tick') &&
   (props.asset!=='option' || (d.leg_type==='option' && (!period.value||d.period===period.value) && (!side.value||d.side===side.value) && (d.underlying||'').toLowerCase().includes(filter.value.toLowerCase())))))
 const primary=computed(()=>datasets.value.find(d=>d.id===dataset.value))
+const optionSymbol=computed(()=>{const m=primary.value?.code?.match(/^([A-Z]+)\.([A-Za-z]+)(\d{4})\.([CP])\.(\d+)$/);if(!m)return '';const sep=m[1]==='DCE'||m[1]==='GFEX'?'-':'';return m[1]+'.'+m[2]+(m[1]==='CZCE'?m[3].slice(1):m[3])+sep+m[4]+sep+m[5]})
 const tickCTA=computed(()=>props.asset==='option' && primary.value?.period==='tick' && selected.value?.engine_type==='CTA')
 const otherChoices=computed(()=>datasets.value.filter(d=>primary.value && d.code!==primary.value.code && ((d.period==='tick')===(primary.value.period==='tick'))))
 const pool=computed(()=>datasets.value.filter(d=>d.id===dataset.value || companions.value.includes(d.id)))

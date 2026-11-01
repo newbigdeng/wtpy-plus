@@ -540,7 +540,7 @@ def native_details(q, helper):
         contracts = read(folder / "market-base/contracts.json", {})
         products = read(folder / "market-base/commodities.json", {})
         scales = {
-            dataset_code("futures", ex, raw, c): products.get(ex, {})
+            (c.get("standard_code") or dataset_code("futures", ex, raw, c)): products.get(ex, {})
             .get(c.get("product"), {})
             .get("volscale")
             for ex, items in contracts.items()

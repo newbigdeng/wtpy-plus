@@ -119,7 +119,13 @@ def registered(app, deploy, authorize):
                     with slots:return dict(result=0,**native_worker(dict(action="expiry_diagnostics",rec=rec,sample=sample)))
                 return dict(result=0,**expiry(root,owner,task,code))
             sources=Path("/report-sources")
-            if mode=="plus" and asset=="futures":
+            if mode=="main" and asset in ("option","futures"):
+                folder=inside(root,"main-runs",owner,task)
+                if not (folder/"task.json").exists():raise ValueError("本账户没有此任务")
+                if diagnostics:
+                    with slots:return dict(result=0,**native_worker(dict(action="run_diagnostics",folder=str(folder),task=task,asset=asset)))
+                args=native(folder,task)
+            elif mode=="plus" and asset=="futures":
                 folder=inside(sources,"plus",task)
                 if diagnostics:
                     from .RunDiagnostics import plus_details

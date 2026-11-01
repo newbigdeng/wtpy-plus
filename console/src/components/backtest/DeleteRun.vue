@@ -21,6 +21,7 @@ async function remove(){
   const {asset,mode,task,strategy,title}=props
   const [path,body]={
     native:asset==='futures'?['/bt/delstrabt',{btid:task,straid:strategy}]:['/mgr/assets/'+asset+'/delete-run',{task}],
+    main:['/mgr/assets/'+asset+'/main-delete',{task}],
     plus:['/bt/plus/delete',{taskid:task}],
     expiry:['/mgr/assets/option/expiry-delete',{run:task}],
     research:['/mgr/research/experiment_delete',{experiment_id:task}]

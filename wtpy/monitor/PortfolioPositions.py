@@ -27,7 +27,8 @@ def standard_code(value, codes=None):
         aliases = {}
         for code in codes:
             exchange, product, month = code.split('.')
-            for alias in (code, exchange + '.' + product + month):
+            from wtpy.ContractCodes import raw_code
+            for alias in (code, exchange + '.' + raw_code(code)):
                 if alias in aliases and aliases[alias] != code: raise ValueError('Ambiguous contract identity')
                 aliases[alias] = code
         if value not in aliases: raise ValueError('Native receipt contains an unknown contract: ' + value)

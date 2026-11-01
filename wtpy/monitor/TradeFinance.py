@@ -2,6 +2,7 @@
 import json
 import math
 from pathlib import Path
+from ..ContractCodes import raw_code, contract_info
 
 
 def number(value):
@@ -24,7 +25,7 @@ def read_table(path):
 
 def fee_rule(table, code, source):
     parts = str(code).split(".")
-    keys = [parts[0]+"."+parts[1]+parts[2], ".".join(parts[:2])] if len(parts) == 3 else [str(code)]
+    keys = [parts[0]+"."+raw_code(code), ".".join(parts[:2])] if len(parts) == 3 else [str(code)]
     rule = next(((key, table[key]) for key in keys if key in table), (None, None))
     key, original = rule
     values = {field: number(original.get(field)) if isinstance(original, dict) else None
@@ -40,7 +41,9 @@ def fee_rule(table, code, source):
 
 def contract_margin(contracts, code, commodities=None):
     parts = str(code).split(".")
-    item = contracts.get(parts[0], {}).get(parts[1]+parts[2], {}) if len(parts) == 3 else {}
+    item = contracts.get(parts[0], {}).get(raw_code(code), {}) if len(parts) == 3 else {}
+    if item:
+        contract_info(contracts, code)
     long = number(item.get("longmarginratio"))
     short = number(item.get("shortmarginratio"))
     commodity = (commodities or {}).get(parts[0], {}).get(parts[1], {}) if len(parts) == 3 else {}

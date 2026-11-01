@@ -15,6 +15,7 @@ import threading
 import time
 import traceback
 from .PlusBacktest import read_json, write_json, dataset_catalog, LIMITATIONS
+from ..ContractCodes import raw_code, contract_info
 from .PlusReport import fund_row, save_view
 STOP = threading.Event()
 def on_stop(signum, frame): STOP.set()
@@ -83,7 +84,7 @@ def frozen_finances(task,codes):
 
 def prepare_stream(task,ticks):
     codes=portfolio_codes(task);frozen_finances(task,codes)
-    identities={(code.split('.')[0],''.join(code.split('.')[1:])) for code in codes}
+    identities={(code.split('.')[0],raw_code(code)) for code in codes}
     stream=[tick for tick in ticks if task['start']<=int(tick.action_date)*10000+int(tick.action_time)//100000<=task['end']]
     stream.sort(key=lambda tick:(int(tick.action_date),int(tick.action_time),bytes(tick.exchg),bytes(tick.code)))
     if not stream:raise ValueError('起止范围内没有Tick；不创建空结果')
@@ -103,7 +104,7 @@ def seed_portfolio_history(folder,snapshot,first,codes):
     for code in codes:
         quote=type(first).from_buffer_copy(first)
         exchange,product,month=code.split('.')
-        quote.exchg=exchange.encode();quote.code=(product+month).encode()
+        quote.exchg=exchange.encode();quote.code=raw_code(code).encode()
         warmup[code]=seed_history(folder,snapshot,quote)
     return warmup
 
@@ -262,7 +263,7 @@ def build_config(task,item,first,folder):
         values={key:fee[key] for key in ('byvolume','open','close','closetoday','minfee')}
         exchange,product,month=code.split('.')
         # WT looks up the exact contract before its commodity fee fallback.
-        fees[exchange+'.'+product+month]=values
+        fees[exchange+'.'+raw_code(code)]=values
         fees.setdefault(fee['key'],values)
     write_json(folder/"fees.json", fees)
     # Freeze effective margin ratios even if server metadata changes later.
@@ -270,13 +271,13 @@ def build_config(task,item,first,folder):
     commodities = read_json(Path(basefiles['commodity']), {})
     for code, settings in finances.items():
         exchange, product, contract = code.split(".")
-        contract_info = contracts[exchange][product+contract]
+        contract_info = contracts[exchange][raw_code(code)]
         contract_info["longmarginratio"] = settings["margin"]["long"]
         contract_info["shortmarginratio"] = settings["margin"]["short"]
         if product in commodities.get(exchange, {}):
             commodities[exchange][product]["marginrate"] = 0
-    write_json(folder/"contracts.json", contracts)
-    write_json(folder/"commodities.json", commodities)
+    (folder/"contracts.json").write_text(json.dumps(contracts,ensure_ascii=True),encoding="ascii")
+    (folder/"commodities.json").write_text(json.dumps(commodities,ensure_ascii=True),encoding="ascii")
     basefiles["contract"] = str(folder/"contracts.json")
     basefiles["commodity"] = str(folder/"commodities.json")
     empty={"strategy_filters":{},"code_filters":{},"executer_filters":{}}
@@ -319,7 +320,12 @@ def run(folder,workspace):
                   basefiles=str(Path(snapshot["basefiles"]["contract"]).parent),basefiles_map=snapshot["basefiles"])
     else:
         item=next(x for x in dataset_catalog(workspace) if x["id"]==task["dataset"])
-    codes,stream=prepare_stream(task,load_ticks(item))
+    main={row["day"]:row for row in task.get("main_plan",[])}
+    if main:
+        from .MainPlus import DayStream,raw_signal_tick
+        codes=portfolio_codes(task)
+        stream=DayStream(task["days_files"])
+    else:codes,stream=prepare_stream(task,load_ticks(item))
     warmup=seed_portfolio_history(folder,task.get('market_snapshot'),stream[0],codes)
     task["warmup_bars"] = warmup[task['code']] if len(codes)==1 else warmup
     basefiles,log=build_config(task,item,stream[0],folder)
@@ -329,7 +335,7 @@ def run(folder,workspace):
     base=BaseCtaStrategy if task["engine_type"]=="CTA" else BaseHftStrategy
     classes=[x for x in vars(module).values() if inspect.isclass(x) and x.__module__==module.__name__ and issubclass(x,base) and x is not base]
     if len(classes)!=1:raise ValueError("源码必须只定义一个与任务类型对应的策略类")
-    supplied={"name":task["straid"],"code":task["code"],"period":task["period"],"capital":task["capital"],**task["params"]}
+    supplied={"name":task["straid"],"code":task.get("signal_code",task["code"]),"period":task["period"],"capital":task["capital"],**task["params"]}
     signature=inspect.signature(classes[0]);params=signature.parameters
     accepts_kwargs=any(x.kind==inspect.Parameter.VAR_KEYWORD for x in params.values())
     extras=set(task["params"])-set(params)
@@ -337,7 +343,13 @@ def run(folder,workspace):
     constructor={k:v for k,v in supplied.items() if k in params or accepts_kwargs}
     bound=signature.bind(**constructor);bound.apply_defaults()
     task["constructor_params"]={k:v for k,v in bound.arguments.items() if k != "name"}
-    strategy=CheckedStrategy(classes[0](**constructor),int(stream[0].action_date)*1000000000+int(stream[0].action_time))
+    underlying=classes[0](**constructor)
+    if main:
+        from .MainStrategy import ContinuousStrategy
+        underlying=ContinuousStrategy(underlying,task["signal_code"],task["main_plan"],task["period"])
+    strategy=CheckedStrategy(underlying,int(stream[0].action_date)*1000000000+int(stream[0].action_time))
+    from .PlusDailyReplay import DailyReplay
+    daily=DailyReplay(strategy, task.get("signal_code",task["code"]), folder) if task["engine_type"]=="CTA" and task["period"]=="d1" else None
     engine=WtEngine(EngineType.ET_CTA if task["engine_type"]=="CTA" else EngineType.ET_HFT,
                     "logcfg.json",str(folder/"generated"))
     data=None;began=time.monotonic()
@@ -351,8 +363,17 @@ def run(folder,workspace):
         attach_portfolio_providers(engine,folder,codes=codes,replay=True,clock=lambda:strategy.replay_tick_time)
         task['volume_scale_by_code']=contract_scales(engine,codes)
         task['volume_scale']=task['volume_scale_by_code'][task['code']]
+        if main:
+            def released(ctx,code):
+                try:
+                    positions=engine._portfolio_position_provider(ctx)
+                    orders=engine._portfolio_orders_provider(ctx)
+                    return not positions.get(code,0) and not orders.get(code,0)
+                except ValueError:
+                    return False
+            underlying.released=released
         engine.add_exetended_parser(BaseExtParser("plus-history"))
-        if task["engine_type"]=="CTA":engine.add_cta_strategy(strategy)
+        if task["engine_type"]=="CTA":engine.add_cta_strategy(daily or strategy)
         else:engine.add_hft_strategy(strategy,"plus",agent=True)
         data=WtDtEngine()
         data.init_with_config({"basefiles":{**basefiles,"utf-8":True},"allday":True,"parsers":[],
@@ -382,24 +403,36 @@ def run(folder,workspace):
         last=None
         for index,tick in enumerate(stream):
             if STOP.is_set() or (folder/"stop.request").exists():break
+            if daily and daily.last is not None and (tick.action_date, tick.action_time//100000)>(daily.last.trading_date,daily.close):
+                daily.close_if_due(tick.action_date,tick.action_time//100000)
+                if strategy.errors:raise RuntimeError(strategy.errors[0])
             strategy.replay_tick_time=int(tick.action_date)*1000000000+int(tick.action_time)
             if mock.plus_mocker_step(1,ctypes.byref(tick))<0:raise RuntimeError("历史Tick撮合线程失去回执")
             # Synchronous DataWriter updates the isolated live DMB bars before the live engine sees this Tick.
             data.push_quote_from_extended_parser("plus-writer",ctypes.byref(tick),0)
             engine.push_quote_from_extended_parser("plus-history",ctypes.byref(tick),0)
+            signal_tick=raw_signal_tick(tick,main,task["signal_code"]) if main else None
+            if signal_tick is not None:
+                data.push_quote_from_extended_parser("plus-writer",ctypes.byref(signal_tick),0)
+                engine.push_quote_from_extended_parser("plus-history",ctypes.byref(signal_tick),0)
             if not mock.plus_mocker_barrier(1):raise RuntimeError("模拟柜台委托队列未排空")
             if strategy.errors:raise RuntimeError("; ".join(strategy.errors[:3]))
+            if daily:
+                if not main or signal_tick is not None:daily.observe(signal_tick if main else tick)
+                if strategy.errors:raise RuntimeError(strategy.errors[0])
             last=tick
             task.update(processed=index+1,progress=round((index+1)/len(stream)*100,2),updated_at=time.time())
             if index%25==0:write_json(folder/"task.json",task)
         if last is not None and not STOP.is_set():
             when=dt.datetime.strptime(str(last.action_date)+str(last.action_time//1000).zfill(6),"%Y%m%d%H%M%S")
-            closing=when.replace(second=0)+dt.timedelta(minutes=1)
-            strategy.replay_tick_time=int(closing.strftime("%Y%m%d"))*1000000000+int(closing.strftime("%H%M"))*100000
+            if daily:daily.close_if_due(last.action_date,last.action_time//100000)
+            closing=when.replace(second=0)  # Never advance beyond the last observed quote.
+            strategy.replay_tick_time=int(last.action_date)*1000000000+int(last.action_time)
             api.plus_replay_flush(int(closing.strftime("%Y%m%d")),int(closing.strftime("%H%M")))
             mock.plus_mocker_barrier(1)
         if strategy.errors:raise RuntimeError("; ".join(strategy.errors[:3]))
-        callback=getattr(strategy,"on_backtest_end",None)
+        if daily and not STOP.is_set() and not strategy.calculation_days:raise ValueError("区间内没有完整的日线收盘回调")
+        callback=getattr(daily or strategy,"on_backtest_end",None)
         if callback:
             contexts=engine.__cta_ctxs__ if task["engine_type"]=="CTA" else engine.__hft_ctxs__
             callback(next(iter(contexts.values())))
@@ -410,7 +443,7 @@ def run(folder,workspace):
         try:write_json(folder/'portfolio-native-final.json',final_portfolio_state(engine,task['straid']))
         finally:engine.release()
         if data is not None:data.release()
-        report=make_report(folder,task,stream[:task.get("processed",0)],strategy.counts)
+        report=make_report(folder,task,(),strategy.counts)
         report["diagnostics"]={"bar_periods":strategy.bar_periods,"calculation_days":strategy.calculation_days,
             "future_bar_callbacks":strategy.future_bars,
             "future_tick_exposures":strategy.future_ticks,
@@ -462,7 +495,7 @@ def make_report(folder,task,stream,callbacks):
     for code in codes if frozen_scales else []:
         if code not in frozen_scales:raise ValueError('Frozen contract multiplier is unavailable: '+code)
         exchange, product, month = code.split('.')
-        ticker=product+month
+        ticker=raw_code(code)
         for key in (code, exchange+'.'+ticker):scales[key]=frozen_scales[code]
         native_codes[ticker]=code if ticker not in native_codes else None
     for ticker, code in native_codes.items():

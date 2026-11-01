@@ -4,6 +4,11 @@
   <div class="tiles"><div v-for="[name,value] in perf" :key="name"><small>{{name}}</small><strong>{{value}}</strong></div></div>
   <h3>月度收益</h3><small>每月末权益相对上月末；首月从初始资金起算。</small>
   <div class="scroll" v-if="returns.months.length"><table><thead><tr><th>年份</th><th v-for="m in 12" :key="m">{{m}} 月</th></tr></thead><tbody><tr v-for="y in years" :key="y"><th>{{y}}</th><td v-for="m in 12" :key="m" :style="cell(month(y,m))">{{pct(month(y,m))}}</td></tr></tbody></table></div><p v-else>缺少初始资金或日结权益。</p>
+  <h3>日度收益</h3>
+  <details v-for="m in returns.months" :key="m.key" class="daily"><summary>{{m.key.slice(0,4)}} 年 {{m.key.slice(4)}} 月 · 月收益 {{pct(m.value)}}</summary>
+  <table><thead><tr><th>交易日</th><th>期末权益</th><th>当日盈亏</th><th>当日收益</th><th>累计收益</th></tr></thead><tbody><tr v-for="r in returns.days.filter(d=>d.day.startsWith(m.key))" :key="r.day"><td>{{r.day}}</td><td>{{fmt(r.equity)}}</td><td>{{fmt(r.pnl)}}</td><td>{{pct(r.rate)}}</td><td>{{pct(r.cumulative)}}</td></tr></tbody></table></details>
+  <p v-if="!returns.months.length">缺少可用的日结权益或初始资金。</p>
+  <p>不足两个日收益时，年化和波动指标留空。没有亏损平仓记录时，获利因子没有有限值。</p>
   <p role="status" v-if="busy || error">{{busy?'正在读取该任务的完整账簿…':error}}</p>
   <template v-if="details">
     <template v-if="asset==='futures' || mode==='expiry'"><h2>保证金与资金使用率</h2>
@@ -87,4 +92,4 @@ const contributions=computed(()=>{const all=opt.value.attribution,ok=all.filter(
 </script>
 <style scoped>
 .diagnostics{margin-top:22px}.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}.tiles div{padding:10px;border:1px solid var(--wt-line);border-radius:5px}.tiles strong{display:block;margin-top:6px}.plot{height:235px}.scroll{overflow:auto}table{border-collapse:collapse;width:100%}td,th{padding:7px;text-align:center;white-space:nowrap;border:1px solid var(--wt-line)}p,small{color:var(--wt-muted);font-size:13px}label{margin-right:12px}select{color:inherit;background:var(--wt-surface);border:1px solid var(--wt-line);padding:4px}
-</style>
+.daily summary{cursor:pointer;padding:8px 0}.daily table{width:100%}</style>

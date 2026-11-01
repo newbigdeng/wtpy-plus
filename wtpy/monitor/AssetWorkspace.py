@@ -466,4 +466,6 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
     registered(app, deploy, authorize)
     from .OptionFactory import register as register_factories
     register_factories(app, deploy, authorize, asset_catalog, get_monitor, lock)
+    from .MainRoutes import register_main
+    register_main(app,deploy,authorize,libraries)
     return monitors
