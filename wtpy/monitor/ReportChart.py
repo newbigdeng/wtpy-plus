@@ -127,6 +127,9 @@ def registered(app, deploy, authorize):
                 else:
                     field(strategy)
                     base=sources/"native" if asset=="futures" else root/"backtests"
+                    marker=read(inside(base,owner,"marker.json"),{})
+                    if task not in marker.get("backtests",{}) or strategy not in marker.get("strategies",{}):
+                        raise ValueError("本账户没有该回测记录")
                 folder=inside(base,owner,strategy,"backtests",task)
                 if not folder.is_dir():raise ValueError("本账户没有此任务的行情目录")
                 args=native(folder,task)

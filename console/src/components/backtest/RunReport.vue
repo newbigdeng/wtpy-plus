@@ -1,11 +1,12 @@
 <template><article class="run-report">
   <nav class="report-nav" aria-label="报告导航">
-    <router-link class="report-back" :to="{name:'backtest-reports',query:{asset,mode:route.query.listMode,strategy:route.query.listStrategy,q:route.query.q}}">
+    <router-link class="report-back" :to="shelf">
       <el-icon aria-hidden="true"><ArrowLeft/></el-icon>返回报告列表
     </router-link>
     <span>{{assetName}} / {{modeName}}</span>
   </nav>
-  <header><div><h1>回测统计报告</h1><p>{{strategyName}} · {{task}}</p></div><el-button @click="load" :loading="busy">刷新报告</el-button></header>
+  <header><div><h1>回测统计报告</h1><p>{{strategyName}} · {{task}}</p></div><div class="report-actions"><el-button @click="load" :loading="busy">刷新报告</el-button>
+    <DeleteRun v-if="report" :asset="asset" :mode="mode" :task="task" :strategy="route.query.strategy" :title="strategyName" :status="report.status" @deleted="router.replace(shelf)"/></div></header>
   <p v-if="busy || error" role="status">{{error || '正在读取任务流水…'}}</p>
   <ReportCandles v-if="task && assetName && modeName" :asset="asset" :mode="mode" :task="task" :strategy="route.query.strategy"/>
   <template v-if="report"><p>任务状态 {{statusLabel}} <span v-if="report.error"> · {{report.error}}</span></p>
@@ -31,12 +32,14 @@
 </article></template>
 <script setup>
 import {ref,computed,watch} from 'vue'
-import {useRoute} from 'vue-router'
+import {useRoute,useRouter} from 'vue-router'
+import DeleteRun from './DeleteRun.vue'
 import {ArrowLeft} from '@element-plus/icons-vue'
 import TerminalChart from '../terminal/TerminalChart.vue'
 import ReportCandles from './ReportCandles.vue'
 const route=useRoute(),report=ref(null),page=ref(1),busy=ref(false),error=ref('')
 const asset=computed(()=>route.query.asset||'futures'),mode=computed(()=>route.query.mode||'native'),task=computed(()=>route.query.task)
+const router=useRouter(),shelf=computed(()=>({name:'backtest-reports',query:{asset:asset.value,mode:route.query.listMode,strategy:route.query.listStrategy,q:route.query.q}}))
 const assetName=computed(()=>({stock:'股票',option:'商品期权',crypto:'加密货币',futures:'期货'})[asset.value])
 const modeName=computed(()=>({native:'原生策略',plus:'Plus 仿真',research:'研究实验',expiry:'跨期清算'})[mode.value])
 const strategyName=computed(()=>report.value?.name||route.query.strategy||modeName.value)
@@ -114,7 +117,7 @@ const columns=computed(()=>mode.value==='expiry'?
 .report-nav>span{padding-left:14px;border-left:1px solid var(--wt-line)}
 .report-back{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;color:var(--wt-text);background:var(--wt-surface);border:1px solid var(--wt-line);border-radius:4px;text-decoration:none}
 .report-back:hover,.report-back:focus-visible{border-color:var(--wt-text)}
-header,.cards{display:flex;gap:20px;align-items:center;justify-content:space-between}header button{margin-left:auto}
+header,.cards{display:flex;gap:20px;align-items:center;justify-content:space-between}.report-actions{display:flex;align-items:center;gap:8px}
 h1{margin:.3em 0}h2{font-size:17px;margin-top:24px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr))}
 .cards div{border:1px solid var(--wt-line);padding:14px}.cards strong{display:block;font-size:19px;margin-top:7px}p,small{color:var(--wt-muted)}
 .chart{height:260px}.drawdown{height:180px}.scroll{overflow:auto}table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:7px;border-bottom:1px solid var(--wt-line)}button{padding:6px}

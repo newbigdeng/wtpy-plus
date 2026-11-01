@@ -39,7 +39,7 @@
    <el-table-column prop="code" label="合约" min-width="130"/>
    <el-table-column label="状态 / 进度" min-width="150"><template #default="{row}"><span :class="'plus-state '+row.status">{{stateName(row.status)}}</span><el-progress v-if="['queued','running'].includes(row.status)" :percentage="Math.min(100,Math.max(0,Number(row.progress)||0))" :stroke-width="3" :show-text="false"/></template></el-table-column>
    <el-table-column label="回放Tick" width="120"><template #default="{row}">{{row.processed||0}} / {{row.total||0}}</template></el-table-column>
-   <el-table-column label="操作" width="150"><template #default="{row}"><el-button link @click="open(row)">详情</el-button><router-link :to="{name:'run-report',query:{asset:'futures',mode:'plus',task:row.id}}">报告</router-link><el-button v-if="['queued','running'].includes(row.status)" link type="danger" @click="stop(row)">停止</el-button></template></el-table-column>
+   <el-table-column label="操作" width="195"><template #default="{row}"><el-button link @click="open(row)">详情</el-button><router-link :to="{name:'run-report',query:{asset:'futures',mode:'plus',task:row.id}}">报告</router-link><el-button v-if="['queued','running'].includes(row.status)" link type="danger" @click="stop(row)">停止</el-button><DeleteRun asset="futures" mode="plus" :task="row.id" :title="row.label || row.code" :status="row.status" @deleted="deleted"/></template></el-table-column>
   </el-table>
   <section v-if="detail?.task" ref="detailPanel" class="plus-detail">
    <div class="plus-detail-heading"><h3>{{detail.task.label||'仿真详情'}}</h3><span :class="'plus-state '+detail.task.status">{{stateName(detail.task.status)}}</span><el-button link @click="loadDetail">刷新详情</el-button><el-button link @click="closeDetail">收起</el-button></div>
@@ -68,10 +68,11 @@
 <script>
 import * as echarts from 'echarts'
 import PlusFinanceReport from './PlusFinanceReport.vue'
+import DeleteRun from './DeleteRun.vue'
 import RiskSelection from '@/components/common/RiskSelection.vue'
 const running=task=>['queued','running'].includes(task.status)
 export default {
- name:'PlusResearch',components:{PlusFinanceReport,RiskSelection},
+ name:'PlusResearch',components:{PlusFinanceReport,RiskSelection,DeleteRun},
  props:{strategyid:{type:String,required:true},engineType:{type:String,default:'cta'},beforeSave:{type:Function,required:true},capital:{type:Number,default:1000000},active:{type:Boolean,default:true},guest:{type:Boolean,default:false}},
  emits:['update:capital','completed'],
  data:()=>({risk:{rules:[]},capabilities:{datasets:[],engines:[],executors:[],limitations:[]},execution:{id:'minimpact',params:{pricemode:1,offset:0,expire:5,span:0,byrate:false,lots:1},weights:''},config:{dataset:'',start:'',end:'',period:'m1'},finance:{feeMode:'dataset',fees:{byvolume:true,open:null,close:null,closetoday:null,minfee:0},marginPercent:null,slippageTicks:0},feeFields:[{key:'open',label:'开仓费率'},{key:'close',label:'平仓费率'},{key:'closetoday',label:'平今费率'},{key:'minfee',label:'每次成交最低费'}],paramsText:'{}',tasks:[],loading:false,launching:false,detail:null,detailLoading:false,ledgerPage:1,ledgerTab:'trades',generation:0,ledgers:[{id:'trades',label:'成交'},{id:'orders',label:'委托'},{id:'positions',label:'持仓'},{id:'funds',label:'资金'},{id:'rejections',label:'拒单'},{id:'risk',label:'风控'},{id:'events',label:'事件'},{id:'route',label:'链路证据'},{id:'log',label:'运行日志'}]}),
@@ -123,6 +124,7 @@ export default {
   async loadDetail(){const id=this.detail?.task?.id,generation=this.generation,sequence=(this._detailSequence||0)+1;if(!id)return;this._detailSequence=sequence;this.detailLoading=true;try{const value=await this.request('detail',{taskid:id,ledger:['log','route'].includes(this.ledgerTab)?null:this.ledgerTab,offset:(this.ledgerPage-1)*200,limit:200,include_log:this.ledgerTab==='log'});if(generation===this.generation&&this.detail?.task?.id===id&&sequence===this._detailSequence){this.detail=value;this.$nextTick(this.drawEquity)}}catch(error){if(sequence===this._detailSequence)this.$message.error(error.message)}finally{if(sequence===this._detailSequence)this.detailLoading=false}},
   async stop(task){if(this.guest){this.$message.warning('游客模式不支持操作');return}try{await this.$confirm('停止本次历史回放并保留已生成记录？','停止 Plus 任务',{confirmButtonText:'停止',cancelButtonText:'取消',type:'warning'});await this.request('stop',{taskid:task.id});await this.refresh();if(this.detail?.task?.id===task.id)await this.loadDetail()}catch(error){if(error instanceof Error)this.$message.error(error.message)}},
   closeDetail(){this._equity?.dispose();this._equity=null;this.detail=null},
+  deleted(id){if(this.detail?.task?.id===id)this.closeDetail();this.refresh()},
   drawEquity(){const node=this.$refs.equityChart;if(!node||!this.equityPoints.length)return;this._equity??=echarts.init(node);const colour=getComputedStyle(document.documentElement).getPropertyValue('--wt-text').trim(),line=getComputedStyle(document.documentElement).getPropertyValue('--wt-success').trim();this._equity.setOption({animation:false,tooltip:{trigger:'axis'},grid:{left:85,right:30,top:20,bottom:35},xAxis:{type:'category',data:this.equityPoints.map(item=>item[0]),axisLabel:{color:colour}},yAxis:{type:'value',scale:true,axisLabel:{color:colour}},series:[{type:'line',showSymbol:false,data:this.equityPoints.map(item=>item[1]),lineStyle:{color:line,width:1.5}}]});this._equity.resize()}
  },
  watch:{strategyid(){++this.generation;this.closeDetail();this.tasks=[];this._tasksLoaded=false;this.refresh()},active(value){if(value)this.$nextTick(this.drawEquity)}},

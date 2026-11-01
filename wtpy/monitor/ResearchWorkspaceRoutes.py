@@ -177,6 +177,15 @@ def register_research_routes(app, bt_mon, check_auth, manager=None, workspace='/
         try:return {'result':0,**manager.detail(user['loginid'],experiment_id)}
         except (ValueError,OSError,RuntimeError) as exc:return failed(exc)
 
+    @app.post('/mgr/research/experiment_delete',tags=['研究工作台'])
+    def experiment_delete(request:Request,experiment_id:str=Body(...,embed=True)):
+        user,error=authorize(request)
+        if error:return error
+        try:
+            manager.delete_experiment(user['loginid'],experiment_id)
+            return {'result':0}
+        except (ValueError,OSError,RuntimeError) as exc:return failed(exc)
+
     @app.post('/mgr/research/experiment_cancel',tags=['研究工作台'])
     def experiment_cancel(request:Request,experiment_id:str=Body(...,embed=True),token:str=Body(None,embed=True)):
         user,error=authorize(request,token)

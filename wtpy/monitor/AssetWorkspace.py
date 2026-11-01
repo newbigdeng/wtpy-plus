@@ -284,6 +284,19 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
                  for item in (monitor.get_backtests(owner, row["id"]) or [])]
         return {"result": 0, "runs": tasks}
 
+    @app.post("/mgr/assets/{asset}/delete-run")
+    def delete_run(request: Request, asset: str, task: str = Body(..., embed=True)):
+        user, error = authorize(request, asset, research=True)
+        if error:
+            return error
+        if asset not in libraries or not can_admin(user):
+            return {"result": -403, "message": "仅管理员可删除此资产的回测"}
+        try:
+            get_monitor(asset).del_backtest(user["loginid"], task)
+            return {"result": 0}
+        except (ValueError, OSError) as exc:
+            return {"result": -2, "message": str(exc)}
+
     @app.post("/mgr/assets/{asset}/detail")
     def detail(request: Request, asset: str, strategy: str = Body(...), task: str = Body(...),
                report: bool = Body(False), offset: int = Body(0,ge=0)):

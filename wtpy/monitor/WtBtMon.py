@@ -408,21 +408,22 @@ class WtBtMon(BtTaskSink):
 
         return ay
 
-    def del_backtest(self, user:str, btid:str):
-        if user not in self.user_bts:
-            bSucc = self.__load_user_data__(user)
-
-            if not bSucc:
-                return
-
-        if user not in self.user_bts:
-            return
-
-        if btid in self.user_bts[user]:
-            self.user_bts[user].pop(btid)
-            self.logger.info("Backtest %s of %s deleted" % (btid, user))
-
-            self.__save_user_data__(user)
+    def del_backtest(self, user: str, btid: str):
+        with self._lock:
+            if user not in self.user_bts:
+                self.__load_user_data__(user)
+            records = self.user_bts.get(user, {})
+            if btid not in records:
+                raise ValueError("本账户没有该回测记录")
+            row = records[btid]
+            if btid in self.task_map or row.get("status") in ("running", "queued", "stopping"):
+                raise ValueError("请等回测结束后再删除")
+            del records[btid]
+            try:
+                self.__save_user_data__(user)
+            except OSError:
+                records[btid] = row
+                raise
 
     def get_bt_funds(self, user:str, straid:str, btid:str) -> list:
         if user not in self.user_bts:

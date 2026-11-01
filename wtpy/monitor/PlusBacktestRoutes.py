@@ -96,6 +96,17 @@ def register_plus_routes(app, bt_mon, check_auth, manager=None):
             return {"result": -2, "message": "Plus 任务不存在或不属于当前账号"}
         return {"result": 0, "message": "OK", **value}
 
+    @app.post("/bt/plus/delete", tags=["Plus 仿真回测"])
+    def delete(request: Request, taskid: str = Body(..., embed=True), token: str = Body(None, embed=True)):
+        user, error = authorize(request, token)
+        if error:
+            return error
+        try:
+            manager.delete(user["loginid"], taskid)
+            return {"result": 0}
+        except (OSError, ValueError) as exc:
+            return error_response(exc)
+
     @app.post("/bt/plus/stop", tags=["Plus 仿真回测"])
     def stop(request: Request, taskid: str = Body(..., embed=True),
              token: str = Body(None, embed=True)):

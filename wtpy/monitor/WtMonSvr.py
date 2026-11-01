@@ -893,7 +893,10 @@ class WtMonSvr(WatcherSink):
                     "message": "回测管理器未配置"
                 }
             else:
-                self.__bt_mon__.del_backtest(user, btid)
+                try:
+                    self.__bt_mon__.del_backtest(user, btid)
+                except (OSError, ValueError) as error:
+                    return {"result": -2, "message": str(error)}
                 ret = {
                     "result": 0,
                     "message": "OK"

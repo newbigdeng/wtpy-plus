@@ -412,6 +412,15 @@ class ResearchWorkspace:
                     project=item['project_snapshot'],report=item['report_snapshot'],**result,
                     read_url=item.get('read_url'))
 
+    def delete_experiment(self, owner, identifier):
+        with self.lock:
+            item = self._sync(owner, self._get('experiment', owner, identifier))
+            if item['status'] not in TERMINAL:
+                raise ValueError('请等研究实验结束后再删除')
+            with self._db() as db:
+                db.execute("UPDATE records SET kind='deleted_experiment' WHERE kind='experiment' AND owner=? AND id=?",
+                           (owner, identifier))
+
     def cancel(self, owner, identifier):
         with self.lock:
             item=self._sync(owner,self._get('experiment',owner,identifier))

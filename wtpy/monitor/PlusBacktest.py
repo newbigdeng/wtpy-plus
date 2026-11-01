@@ -239,6 +239,16 @@ class PlusBacktestManager:
         if ledger is not None:
             result["ledger_page"] = ledger_page(path, report, ledger, offset, limit)
         return result
+    def delete(self, user, taskid, *, require_exit=False):
+        with self.lock:
+            path, task = self._owned(user, taskid)
+            waiting_for_worker = require_exit and not task.get("historical_research") and task.get("exitcode") is None
+            if task["status"] not in TERMINAL or taskid in self.processes or waiting_for_worker:
+                raise ValueError("请等 Plus 回测进程结束后再删除")
+            archive = self.root / ".deleted"
+            archive.mkdir(mode=0o700, exist_ok=True)
+            path.rename(archive / taskid)
+
     def stop(self, user, taskid):
         with self.lock:
             path, task = self._owned(user, taskid)

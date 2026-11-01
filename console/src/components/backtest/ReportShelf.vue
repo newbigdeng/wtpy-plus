@@ -16,12 +16,14 @@
     <div v-if="filtered.length" class="rows"><p>共 {{filtered.length}} 条记录 · 按启动时间从新到旧</p><table><thead><tr><th>策略 / 任务</th><th>类型</th><th>启动时间</th><th>标的</th><th>状态</th><th>报告</th></tr></thead>
       <tbody><tr v-for="r in filtered" :key="r.mode+r.id"><td>{{r.title}}<small>{{r.id}}</small></td><td>{{types[r.mode]}}</td><td>{{r.at?new Date(r.at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—'}}</td>
         <td>{{r.symbol || '—'}}</td><td>{{states[r.status] || r.status || '历史记录'}}</td>
-        <td><router-link :to="{name:'run-report',query:{asset,mode:r.mode,task:r.id,strategy:r.straid,listMode:route.query.mode,listStrategy:route.query.strategy,q:route.query.q}}">查看报告</router-link></td></tr></tbody></table></div>
+        <td><div class="row-actions"><router-link :to="{name:'run-report',query:{asset,mode:r.mode,task:r.id,strategy:r.straid,listMode:route.query.mode,listStrategy:route.query.strategy,q:route.query.q}}">查看报告</router-link>
+          <DeleteRun :asset="asset" :mode="r.mode" :task="r.id" :strategy="r.straid" :title="r.title" :status="r.status" @deleted="load"/></div></td></tr></tbody></table></div>
   </section>
 </template>
 <script setup>
 import {ref,computed,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
+import DeleteRun from './DeleteRun.vue'
 const names={futures:'期货',stock:'股票',option:'商品期权',crypto:'加密货币'}
 const types={native:'原生策略',plus:'Plus 仿真',research:'研究实验',expiry:'跨期清算'}
 const states={completed:'已完成',running:'运行中',failed:'失败',interrupted:'已中断',queued:'排队中',stopped:'已停止'}
@@ -69,6 +71,7 @@ async function load(){
 watch([asset,mode,()=>route.query.strategy],load,{immediate:true})
 </script>
 <style scoped>
+.row-actions{display:flex;align-items:center;gap:14px;white-space:nowrap}
 .report-shelf{padding:clamp(15px,3vw,40px);color:var(--wt-text)}header,.filters{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 header{justify-content:space-between}h1{margin:.3em 0}p,small{color:var(--wt-muted)}.filters{margin:20px 0}
 label{display:grid;gap:5px}select,input{padding:7px;color:inherit;background:var(--wt-surface);border:1px solid var(--wt-line)}

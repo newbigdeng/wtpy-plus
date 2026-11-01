@@ -59,7 +59,7 @@
       </section>
       <section v-else><h3>我的回测记录 <el-button link @click="load">刷新任务</el-button></h3><p v-if="!runs.length">此资产下还没有任务。</p>
       <table v-else><thead><tr><th>策略</th><th>合约</th><th>启动时间</th><th>状态</th><th>任务</th></tr></thead>
-      <tbody><tr v-for="r in runs" :key="r.id"><td>{{r.strategy}}</td><td>{{r.dataset?.code}}</td><td>{{r.runtime}}</td><td>{{statusText(r.status)}}</td><td><router-link :to="{name:'run-report',query:{asset,strategy:r.straid,task:r.id}}">统计报告</router-link> · <button @click="readDetail(r)">任务详情</button></td></tr></tbody></table>
+      <tbody><tr v-for="r in runs" :key="r.id"><td>{{r.strategy}}</td><td>{{r.dataset?.code}}</td><td>{{r.runtime}}</td><td>{{statusText(r.status)}}</td><td><router-link :to="{name:'run-report',query:{asset,strategy:r.straid,task:r.id}}">统计报告</router-link> · <button @click="readDetail(r)">任务详情</button> <DeleteRun :asset="asset" :task="r.id" :title="r.strategy" :status="r.status" @deleted="deleted"/></td></tr></tbody></table>
       <section v-if="detail"><h3>任务结果 · {{detail.status}}</h3><p v-if="detail.error">{{detail.error}}</p>
         <p v-if="asset==='option' && activeRun">撮合 {{activeRun.fill_config?.fill_model || activeRun.strategy_type}} · 延迟 {{activeRun.fill_config?.event_delay ?? 0}} 个事件 · 手续费 {{activeRun.dataset?.fee_per_lot!=null ? activeRun.dataset.fee_per_lot+' 元/手/边' : '合约费表'}}</p>
         <dl><template v-for="(value,key) in detail.summary" :key="key"><dt>{{key}}</dt><dd>{{value}}</dd></template></dl>
@@ -86,6 +86,7 @@
 <script setup>
 import {computed,ref,onMounted,onUnmounted,watch} from 'vue'
 import OptionExpiry from './OptionExpiry.vue'
+import DeleteRun from '../backtest/DeleteRun.vue'
 import FactoryResearch from './FactoryResearch.vue'
 import {useRoute} from 'vue-router'
 const props=defineProps({asset:String,name:String,backtest:Boolean})
@@ -101,6 +102,10 @@ const companions=ref([])
 const fee=ref('')
 const period=ref(''),side=ref(''),filter=ref(''),fill=ref('causal_touch'),delay=ref(0),participation=ref(10)
 const activeRun=ref(null),risk=ref(null),riskDay=ref(''),rate=ref(2),riskBusy=ref(false)
+function deleted(id){
+  if(activeRun.value?.id===id){activeRun.value=null;detail.value=null;risk.value=null}
+  load()
+}
 const filtered=computed(()=>strategies.value.filter(s=>[s.name,s.id,s.engine_type].join(' ').toLowerCase().includes(search.value.toLowerCase())))
 const mainChoices=computed(()=>datasets.value.filter(d=>d.rows>0 && d.period!=='trades' && (selected.value?.engine_type!=='HFT' || d.period==='tick') &&
   (props.asset!=='option' || (d.leg_type==='option' && (!period.value||d.period===period.value) && (!side.value||d.side===side.value) && (d.underlying||'').toLowerCase().includes(filter.value.toLowerCase())))))

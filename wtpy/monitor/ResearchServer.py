@@ -184,6 +184,38 @@ def create_research_app(*, root, runs, template, plus_root, upstream, workspace=
             value=guest_data(value)
         return value
 
+    @app.post('/bt/plus/delete')
+    def delete_plus(request:Request, taskid:str=Body(...,embed=True)):
+        from .Roles import RESEARCH_ROLES
+        ok,user=authenticate(request)
+        if not ok:return user
+        if user.get('role') not in RESEARCH_ROLES or user.get('products'):
+            return {'result':-403,'message':'需要独立的研究账户'}
+        try:
+            plus.delete(user['loginid'],taskid,require_exit=True)
+            return {'result':0}
+        except (OSError,ValueError) as exc:
+            return {'result':-2,'message':str(exc)}
+
+    @app.post('/bt/delstrabt')
+    def delete_native(request:Request, btid:str=Body(...,embed=True), straid:str=Body(None,embed=True)):
+        from .Roles import RESEARCH_ROLES
+        ok,user=authenticate(request)
+        if not ok:return user
+        if user.get('role') not in RESEARCH_ROLES or user.get('products'):
+            return {'result':-403,'message':'需要独立的研究账户'}
+        headers=upstream_headers(request)
+        strategies=[straid] if straid else [s['id'] for s in monitor_json(upstream,'/bt/qrystras',{},headers).get('strategies',[])]
+        row=None
+        for strategy in strategies:
+            listing=monitor_json(upstream,'/bt/qrystrabts',{'straid':strategy},headers)
+            row=next((r for r in listing.get('backtests') or [] if r['id']==btid),None)
+            if row:break
+        if not row:return {'result':-2,'message':'本账户没有该回测'}
+        if row.get('status') in ('running','queued','stopping'):
+            return {'result':-2,'message':'请等回测结束后再删除'}
+        return monitor_json(upstream,'/bt/delstrabt',{'btid':btid},headers)
+
     @app.post('/bt/plus/detail')
     def detail(request:Request,taskid:str=Body(...,embed=True),
                ledger:str=Body(None,embed=True),offset:int=Body(0,ge=0,embed=True),

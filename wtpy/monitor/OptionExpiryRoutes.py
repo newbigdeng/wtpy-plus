@@ -146,6 +146,23 @@ def register(app, deploy, authorize, get_monitor):
                 result=-2, message=str(e) if isinstance(e, ValueError) else "无法读取完整的期权回测数据"
             )
 
+    @app.post("/mgr/assets/option/expiry-delete")
+    def delete(request: Request, run: str = Body(..., embed=True)):
+        from .Roles import can_admin
+        user, error = authorize(request, "option", research=True)
+        if error:
+            return error
+        if not can_admin(user):
+            return dict(result=-403, message="仅管理员可删除期权回测")
+        if not re.fullmatch(r"\d{8}-\d{6}-[a-f0-9]{12}", run):
+            return dict(result=-2, message="任务编号无效")
+        path = inside(owner_dir(user), run + ".json")
+        try:
+            path.rename(path.with_suffix(".deleted"))
+        except FileNotFoundError:
+            return dict(result=-2, message="本账户没有该任务")
+        return dict(result=0)
+
     @app.post("/mgr/assets/option/expiry-detail")
     def detail(request: Request, run: str = Body(..., embed=True)):
         user, error = authorize(request, "option", research=True)
