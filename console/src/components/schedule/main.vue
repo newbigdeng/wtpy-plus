@@ -1,12 +1,16 @@
 <template>
- <div v-if="subscriptionsTab" class="scheduler-subscriptions">
-  <router-link v-if="canViewScheduler" to="/schedule">← 调度列表</router-link>
-  <SubscriptionCenter/>
- </div>
- <div v-else class="scheduler-workspace">
+ <div class="scheduler-workspace" :class="{'show-subscriptions':subscriptionsTab}">
   <section class="scheduler-list">
-   <div class="scheduler-toolbar"><el-tabs v-model="selCat" @tab-change="value=>value==='logs'&&queryLogs()"><el-tab-pane label="调度列表" name="list"/><el-tab-pane label="调度日志" name="logs"/></el-tabs><el-button @click="queryData()">刷新</el-button><el-button @click="handleAppCommand('add')">添加应用</el-button><el-button :disabled="!curMonCfg.id" @click="handleAppCommand('del')">删除</el-button></div>
-   <textarea v-if="selCat==='logs'" readonly ref="logs" aria-label="调度日志" class="scheduler-logs" :value="logs" v-loading="logOnway"/>
+   <div class="scheduler-toolbar">
+    <el-tabs :model-value="activeTab" @update:model-value="selectTab">
+     <el-tab-pane v-if="canViewScheduler" label="调度列表" name="list"/>
+     <el-tab-pane v-if="canViewScheduler" label="调度日志" name="logs"/>
+     <el-tab-pane v-if="!guest || subscriptionsTab" label="切换订阅" name="subscriptions"/>
+    </el-tabs>
+    <template v-if="!subscriptionsTab"><el-button @click="queryData()">刷新</el-button><el-button @click="handleAppCommand('add')">添加应用</el-button><el-button :disabled="!curMonCfg.id" @click="handleAppCommand('del')">删除</el-button></template>
+   </div>
+   <SubscriptionCenter v-if="subscriptionsTab"/>
+   <textarea v-else-if="activeTab==='logs'" readonly ref="logs" aria-label="调度日志" class="scheduler-logs" :value="logs" v-loading="logOnway"/>
    <el-table v-else :data="monitors" border stripe v-loading="loading" highlight-current-row @current-change="handleSelectApp" empty-text="尚无调度任务，点击添加应用">
     <el-table-column prop="id" label="进程" min-width="160" fixed="left" show-overflow-tooltip/>
     <el-table-column label="状态" width="90"><template #default="{row}"><span :class="row.running?'text-success':'text-muted'">{{row.running?'运行中':'已停止'}}</span></template></el-table-column>
@@ -15,11 +19,8 @@
     <el-table-column label="采集订阅" width="112"><template #default="{row}"><router-link v-if="/(?:^|[\\/\s])run_datahub\.py(?:\s|$)/.test(row.param || '')" :to="{path:'/schedule',query:{tab:'subscriptions',hub:row.id}}">选择标的</router-link></template></el-table-column>
     <el-table-column label="进程操作" width="128" fixed="right"><template #default="{row}"><ProcessControl :id="row.id" :running="row.running" :show-state="false" @changed="queryData"/></template></el-table-column>
    </el-table>
-   <template v-if="selCat==='list' && !guest">
-    <nav class="hub-links"><strong>数据中台订阅</strong><router-link v-for="(name,key) in hubNames" :key="key" :to="{path:'/schedule',query:{tab:'subscriptions',asset:key}}">{{name}} · 选择标的</router-link></nav>
-   </template>
   </section>
-  <aside class="scheduler-config"><MoniforCfg :config="curMonCfg" :fixinfo="!addApp" :forapp="curMonCfg.type==0" @cfgudt="onCfgUpdated"/></aside>
+  <aside v-if="!subscriptionsTab" class="scheduler-config"><MoniforCfg :config="curMonCfg" :fixinfo="!addApp" :forapp="curMonCfg.type==0" @cfgudt="onCfgUpdated"/></aside>
  </div>
 </template>
 
@@ -36,12 +37,11 @@ export default {
     computed:{
         guest(){return useSessionStore().cache.userinfo?.role==='guest'},
         subscriptionsTab(){return this.$route.query.tab==='subscriptions'},
+        activeTab(){return this.subscriptionsTab?'subscriptions':this.$route.query.tab==='logs'?'logs':'list'},
         canViewScheduler(){return this.guest || ['admin','superman'].includes(useSessionStore().cache.userinfo?.role)}
     },
     data() {
         return {
-            selCat:"list",
-            hubNames:{futures:'期货',option:'商品期权',crypto:'加密货币'},
             showfolders:false,
             selfolder:"",
             loading: false,
@@ -102,10 +102,8 @@ export default {
         }
     },
     methods:{
-        handleClickTab: function(tab, event){
-            this.selCat = tab.props.name;
-            if(tab.props.name == "logs")
-                this.queryLogs();
+        selectTab(tab){
+            if(tab!==this.activeTab)this.$router.push({path:'/schedule',query:tab==='list'?{}:{tab}});
         },
         onCfgUpdated: function(){
             this.queryData();
@@ -245,10 +243,11 @@ export default {
             }
         }
     },
-    watch:{subscriptionsTab:{immediate:true,handler(open){
+    watch:{activeTab:{immediate:true,handler(tab){
         clearInterval(this.poll);
-        if(open || !this.canViewScheduler)return;
-        this.queryData();this.queryLogs();
+        if(!this.canViewScheduler || tab==='subscriptions')return;
+        if(tab==='logs'){this.queryLogs();return}
+        this.queryData();
         this.poll=setInterval(()=>{if(!document.hidden && !this.processBusy)this.queryData(true)},5000);
     }}},
     beforeUnmount(){clearInterval(this.poll);}
@@ -258,6 +257,6 @@ export default {
 
 <!-- Add "scoped" attribute to limit CSS to this component only -->
 <style scoped>
-.scheduler-subscriptions{height:100%;overflow:auto;padding:12px}.hub-links{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.scheduler-workspace.show-subscriptions{grid-template-columns:minmax(0,1fr)}
 .scheduler-workspace{height:100%;min-height:650px;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(380px,1fr);overflow:auto}.scheduler-list{min-width:0;padding:12px 16px;display:flex;flex-direction:column;gap:12px}.scheduler-list>.el-table{flex:1;min-height:350px}.scheduler-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.scheduler-toolbar>.el-tabs{margin-right:auto}.scheduler-toolbar :deep(.el-tabs__header){margin:0}.scheduler-toolbar :deep(.el-tabs__content){display:none}.scheduler-config{border-left:1px solid var(--wt-line);overflow:auto}.scheduler-logs{flex:1;min-height:400px;resize:none;background:var(--wt-matte);color:var(--wt-text);border:1px solid var(--wt-line);padding:12px;font:11px/1.8 var(--wt-mono)}@media(max-width:1280px){.scheduler-workspace{grid-template-columns:minmax(0,1fr);height:auto}.scheduler-config{border:0;border-top:1px solid var(--wt-line)}.scheduler-list{min-height:440px}}
 </style>

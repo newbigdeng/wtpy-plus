@@ -1,5 +1,5 @@
 <template>
-  <section class="center"><h2>数据中台订阅</h2>
+  <section class="center" aria-label="数据中台订阅">
     <nav aria-label="采集资产"><button v-for="(title,key) in names" :key="key" :aria-pressed="asset===key" @click="choose(key)">{{title}}</button></nav>
     <template v-if="asset==='futures'">
       <label>组合 <select :value="group" @change="selectGroup($event.target.value)"><option v-for="g in groups" :key="g.id" :value="g.id">{{g.name || g.id}}</option></select></label>
