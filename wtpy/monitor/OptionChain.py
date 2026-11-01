@@ -7,8 +7,11 @@ from .AssetMarkets import COMMODITY_EXCHANGES, OPTION, inside, instrument
 
 
 def import_directory(root, filename):
+    return save_directory(root, json.loads(Path(filename).read_bytes()))
+
+
+def save_directory(root, payload):
     from wtpy.StrategyRuntime import atomic_json
-    payload = json.loads(Path(filename).read_bytes())
     if payload.get("rsp_code") != 0:
         raise ValueError("OpenCTP 没有返回合约目录")
     chains = {}

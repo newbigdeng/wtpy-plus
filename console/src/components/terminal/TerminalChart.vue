@@ -17,6 +17,14 @@ function draw(){
    Object.assign(option.yAxis,props.plot.axis || {})
    if(props.plot.tooltip)option.tooltip=props.plot.tooltip
    if(props.plot.zoom)option.dataZoom=props.plot.zoom
+   if(props.plot.volumes){
+     option.grid=[{...option.grid,top:38,height:'49%'},{left:65,right:22,top:'69%',height:'15%'}]
+     option.xAxis=[{...option.xAxis,axisLabel:{show:false}},{...option.xAxis,gridIndex:1}]
+     option.yAxis=[option.yAxis,{...option.yAxis,gridIndex:1,min:0,splitNumber:2}]
+     option.series.push({name:'成交量',type:'bar',xAxisIndex:1,yAxisIndex:1,data:props.plot.volumes})
+     option.axisPointer={link:[{xAxisIndex:'all'}]}
+     option.dataZoom=option.dataZoom.map(z=>({...z,xAxisIndex:[0,1]}))
+   }
  }
  chart.setOption({...option,backgroundColor:'transparent',textStyle:{color},animation:false},true)
 }

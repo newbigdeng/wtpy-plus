@@ -1,6 +1,6 @@
 <template>
   <section><h3>商品期权合约链</h3>
-    <form @submit.prevent="search"><label>标的期货 <input v-model.trim="underlying" placeholder="例如 DCE.m2701" required></label> <button>查看合约链</button></form>
+    <form @submit.prevent="search"><label>标的期货 <OptionPicker v-model="underlying" futures label="标的期货" placeholder="例如 DCE.m2701" @pick="code=>{underlying=code;search()}"/></label> <button>查看合约链</button></form>
     <p role="status">{{message}}</p>
     <button v-if="contracts.length" type="button" @click="addShown">选择本页合约</button>
     <table v-if="contracts.length"><thead><tr><th>分析</th><th>方向</th><th>行权价</th><th>到期日</th><th>合约</th></tr></thead>
@@ -11,6 +11,7 @@
 <script setup>
 import {ref} from 'vue'
 import OptionAnalysis from './OptionAnalysis.vue'
+import OptionPicker from './OptionPicker.vue'
 defineProps({mode:String})
 defineEmits(['view','analyze'])
 const selected=ref([]),desk=ref(null),listed=ref('')

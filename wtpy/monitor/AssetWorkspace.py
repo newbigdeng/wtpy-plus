@@ -203,6 +203,26 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
         return StreamingResponse(stream(), media_type="application/x-ndjson",
                                  headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no", "Content-Encoding": "identity"})
 
+    @app.post("/mgr/assets/option/lookup")
+    def lookup(request: Request, prefix: str = Body("",max_length=42), futures: bool = Body(False)):
+        _, error = authorize(request, "option")
+        if error:return error
+        from .OptionWatch import suggestions
+        try:
+            return {"result":0, **suggestions(asset_root(deploy,"option"),prefix,futures)}
+        except (ValueError,OSError):
+            return {"result":-2,"message":"无法读取期权目录，请稍后重试"}
+
+    @app.post("/mgr/assets/option/daily-bars")
+    def daily_bars(request: Request, symbol: str = Body(...,embed=True,max_length=42)):
+        _, error = authorize(request, "option")
+        if error:return error
+        from .OptionWatch import daily_view
+        try:
+            return {"result":0, **daily_view(asset_root(deploy,"option"),symbol)}
+        except (ValueError,OSError,TypeError):
+            return {"result":-2,"message":"无法读取此合约的公开日线，请检查代码或稍后重试"}
+
     @app.post("/mgr/assets/option/chain")
     def option_chain(request: Request, underlying: str = Body(..., embed=True)):
         _, error = authorize(request, "option")

@@ -3,30 +3,35 @@
     <h2>{{ names[asset] }}行情</h2>
     <AssetShortcuts v-if="asset==='crypto'||asset==='option'" :asset="asset" :group="$route.query.group" @pick="shortcut"/>
     <form @submit.prevent="view">
-      <label v-if="asset==='option'||asset==='futures'">行情环境
-        <select v-model="mode" @change="symbol && view()"><option value="session">交易时段行情</option><option value="simulation">7×24 仿真回放</option></select>
+      <label v-if="asset==='option'||asset==='futures'">{{asset==='option'?'看盘模式':'行情环境'}}
+        <select v-model="mode" @change="switchMode"><option v-if="asset==='option'" value="history">公开日线</option><option value="session">CTP 交易时段行情</option><option value="simulation">CTP 7×24 仿真回放</option></select>
       </label>
-      <label>交易所代码 <input v-model.trim="draft" :placeholder="examples[asset]" required maxlength="42"></label>
+      <label v-if="asset==='option'">期权合约 <OptionPicker v-model="draft" label="期权合约" placeholder="输入 DCE、品种或合约代码" @pick="selectContract"/></label>
+      <label v-else>交易所代码 <input v-model.trim="draft" :placeholder="examples[asset]" required maxlength="42"></label>
       <button>查看行情</button><button v-if="symbol" type="button" @click="stop">停止</button>
     </form>
-    <p class="hint">输入一个标的开始接收快照。切换标的或离开页面会停止接收。</p>
+    <p v-if="asset==='option'" class="hint">输入交易所或品种，按 Tab 选中当前候选。公开日线可在休市时查看；切换到 CTP 可加看盘口。</p>
+    <p v-else class="hint">输入一个标的开始接收快照。切换标的或离开页面会停止接收。</p>
     <p role="status">{{ symbol }} {{ status }}</p>
     <dl v-if="quote">
       <div v-for="[key,title] in fields" :key="key"><dt>{{title}}</dt><dd>{{quote[key] ?? '—'}}</dd></div>
     </dl>
-    <OptionChain v-if="asset==='option'" ref="optionChain" :mode="mode" @analyze="stop" @view="value => {draft=value; view()}"/>
+    <OptionDaily v-if="asset==='option' && symbol" :symbol="symbol"/>
+    <OptionChain v-if="asset==='option'" ref="optionChain" :mode="mode==='history'?'session':mode" @analyze="stop" @view="selectContract"/>
   </section>
 </template>
 <script setup>
 import {ref, onMounted, onBeforeUnmount} from 'vue'
 import OptionChain from './OptionChain.vue'
+import OptionPicker from './OptionPicker.vue'
+import OptionDaily from './OptionDaily.vue'
 import AssetShortcuts from './AssetShortcuts.vue'
 const props=defineProps({asset:{type:String,required:true}})
 const examples={stock:'SSE.600000',futures:'SHFE.rb2701',option:'DCE.m2701-C-3000',crypto:'BTC-USD'}
 const names={stock:'股票',futures:'期货',option:'商品期权',crypto:'加密货币'}
 const fields=[['last','最新成交'],['bid','买一'],['ask','卖一'],['time','源端行情时间'],['trading_day','交易日'],['source','行情源']]
 const optionChain=ref(null)
-const mode=ref('session'),draft=ref(''), symbol=ref(''), quote=ref(null), status=ref('')
+const mode=ref(props.asset==='option'?'history':'session'),draft=ref(''), symbol=ref(''), quote=ref(null), status=ref('')
 let request, timer
 function shortcut(code){
   if(props.asset==='option')optionChain.value?.openChain(code)
@@ -38,10 +43,12 @@ function cancel(){
   request=null
 }
 function stop(){cancel();symbol.value='';quote.value=null;status.value='已停止'}
+function selectContract(code){draft.value=code;view()}
+function switchMode(){optionChain.value?.stop();cancel();quote.value=null;status.value='';if(symbol.value && mode.value!=='history')refresh()}
 function view(){
   optionChain.value?.stop()
-  cancel();symbol.value=draft.value;quote.value=null
-  if(symbol.value) refresh()
+  cancel();symbol.value=draft.value.trim();quote.value=null;status.value=''
+  if(symbol.value && mode.value!=='history') refresh()
 }
 async function refresh(){
   if(document.hidden || !symbol.value)return
@@ -91,6 +98,7 @@ async function refresh(){
 }
 function visibility(){
   cancel()
+  if(mode.value==='history')return
   if(document.hidden){quote.value=null;status.value='页面已隐藏，暂停接收'}
   else if(symbol.value)refresh()
 }
