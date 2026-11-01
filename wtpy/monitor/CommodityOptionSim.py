@@ -12,6 +12,25 @@ from .MarketSubscriptions import _load
 from .StrategyLibrary import StrategyLibrary
 
 
+SIM_FRONTS = {
+    "tcp://182.254.243.31:30003": ("tcp://182.254.243.31:30013", "session"),
+    "tcp://182.254.243.31:40001": ("tcp://182.254.243.31:40011", "simulation"),
+}
+
+
+def simnow_profile(path):
+    traders = [t for t in _load(Path(path)).get("traders", []) if t.get("active")]
+    if len(traders) != 1:
+        raise ValueError("请选择只包含一个活动 SimNow 通道的配置")
+    row = traders[0]
+    if (row.get("module") != "TraderCTP" or str(row.get("broker")) != "9999"
+            or row.get("front") not in SIM_FRONTS):
+        raise ValueError("期权模拟仅允许已登记的 SimNow CTP 仿真前置")
+    if not all(row.get(k) for k in ("user", "pass", "appid", "authcode")):
+        raise ValueError("SimNow 配置缺少账户或认证字段")
+    return {key: str(row[key]) for key in ("broker","user","pass","appid","authcode","front")}
+
+
 def main():
     import fcntl
     parser = argparse.ArgumentParser(description=__doc__)
@@ -20,10 +39,15 @@ def main():
     parser.add_argument("version", type=int)
     parser.add_argument("--also", action="append", default=[], metavar="OPTION", help="同一策略的其他商品期权")
     parser.add_argument("--hedge-underlyings", action="store_true", help="加入这些期权对应的标的期货")
-    parser.add_argument("--analysis-session", help="策略读取的 7×24 分析会话")
-    parser.add_argument("--start", action="store_true", help="启动专用 SimNow 模拟账户")
+    parser.add_argument("--analysis-session", help="策略读取的同环境分析会话")
+    parser.add_argument("--simnow-profile", default=os.getenv("WT_OPTION_SIM_PROFILE"),
+                        help="服务器上现有的 SimNow 交易通道文件")
+    parser.add_argument("--start", action="store_true", help="启动 SimNow 模拟策略")
     parser.add_argument("--deploy", default=os.environ.get("WT_DATA_DIR", "/data"))
     args = parser.parse_args()
+    account = simnow_profile(args.simnow_profile) if args.simnow_profile else None
+    tdfront = account["front"] if account else "tcp://182.254.243.31:40001"
+    mdfront, mode = SIM_FRONTS[tdfront]
     root = asset_root(args.deploy, "option")
     common = inside(root, "common")
     contracts = _load(inside(root, "common", "contracts.json"))
@@ -54,7 +78,7 @@ def main():
         params["underlyings"] = hedges
     if args.analysis_session:
         from .OptionFrames import read_option_frame
-        frame = read_option_frame(root,args.analysis_session,mode="simulation")
+        frame = read_option_frame(root,args.analysis_session,mode=mode)
         if not set(options)<=set(r["symbol"] for r in frame["rows"]):
             raise ValueError("分析会话未包含策略选择的全部期权")
         params["analysis_session"] = args.analysis_session
@@ -81,11 +105,13 @@ def main():
     os.chdir(work)
     with (work/"runner.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # Use a dedicated simulated login. Endpoints cannot be redirected to a live broker.
-        login = dict(broker="9999", user=os.environ["WT_OPTION_SIM_USER"], **{"pass":os.environ["WT_OPTION_SIM_PASSWORD"]})
-        trader = dict(**login, id="option_sim", active=True, module="TraderCTP", front="tcp://182.254.243.31:40001",
-                      appid=os.environ["WT_OPTION_SIM_APPID"], authcode=os.environ["WT_OPTION_SIM_AUTHCODE"])
-        feed = dict(**login, id="option_md", active=True, module="ParserCTP", front="tcp://182.254.243.31:40011", code=",".join(ex+"."+ticker for ex,items in selected.items() for ticker in items))
+        if account is None:
+            account = dict(broker="9999", user=os.environ["WT_OPTION_SIM_USER"], **{"pass":os.environ["WT_OPTION_SIM_PASSWORD"]},
+                           appid=os.environ["WT_OPTION_SIM_APPID"], authcode=os.environ["WT_OPTION_SIM_AUTHCODE"], front=tdfront)
+        trader = dict(**account, id="option_sim", active=True, module="TraderCTP")
+        feed = dict(broker=account["broker"], user=account["user"], **{"pass":account["pass"]},
+                    id="option_md", active=True, module="ParserCTP", front=mdfront,
+                    code=",".join(ex+"."+ticker for ex,items in selected.items() for ticker in items))
         atomic_json(work/"contract.json", selected)
         atomic_json(work/"log.json", {"root":{"level":"info","sinks":[{"type":"console_sink"}]}})
         kind = row["engine_type"]

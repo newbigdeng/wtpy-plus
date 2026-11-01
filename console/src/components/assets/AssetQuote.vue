@@ -1,6 +1,7 @@
 <template>
   <section class="asset-quote">
     <h2>{{ names[asset] }}行情</h2>
+    <AssetShortcuts v-if="asset==='crypto'||asset==='option'" :asset="asset" :group="$route.query.group" @pick="shortcut"/>
     <form @submit.prevent="view">
       <label v-if="asset==='option'||asset==='futures'">行情环境
         <select v-model="mode" @change="symbol && view()"><option value="session">交易时段行情</option><option value="simulation">7×24 仿真回放</option></select>
@@ -19,6 +20,7 @@
 <script setup>
 import {ref, onMounted, onBeforeUnmount} from 'vue'
 import OptionChain from './OptionChain.vue'
+import AssetShortcuts from './AssetShortcuts.vue'
 const props=defineProps({asset:{type:String,required:true}})
 const examples={stock:'SSE.600000',futures:'SHFE.rb2701',option:'DCE.m2701-C-3000',crypto:'BTC-USD'}
 const names={stock:'股票',futures:'期货',option:'商品期权',crypto:'加密货币'}
@@ -26,6 +28,10 @@ const fields=[['last','最新成交'],['bid','买一'],['ask','卖一'],['time',
 const optionChain=ref(null)
 const mode=ref('session'),draft=ref(''), symbol=ref(''), quote=ref(null), status=ref('')
 let request, timer
+function shortcut(code){
+  if(props.asset==='option')optionChain.value?.openChain(code)
+  else{draft.value=code;view()}
+}
 function cancel(){
   clearTimeout(timer)
   request?.abort()

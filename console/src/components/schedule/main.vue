@@ -10,6 +10,9 @@
     <el-table-column prop="path" label="执行程序" min-width="200" show-overflow-tooltip/><el-table-column prop="param" label="参数" min-width="170" show-overflow-tooltip/><el-table-column prop="folder" label="工作目录" min-width="200" show-overflow-tooltip/>
     <el-table-column label="进程操作" width="128" fixed="right"><template #default="{row}"><ProcessControl :id="row.id" :running="row.running" :show-state="false" @changed="queryData"/></template></el-table-column>
    </el-table>
+   <template v-if="selCat==='list' && !guest">
+    <AssetDatahub asset="option" title="商品期权"/><AssetDatahub asset="crypto" title="加密货币"/>
+   </template>
   </section>
   <aside class="scheduler-config"><MoniforCfg :config="curMonCfg" :fixinfo="!addApp" :forapp="curMonCfg.type==0" @cfgudt="onCfgUpdated"/></aside>
  </div>
@@ -19,11 +22,13 @@
 import {useSessionStore} from "@/store.js";
 import MoniforCfg from '../common/moncfg.vue'
 import ProcessControl from '../common/ProcessControl.vue'
+import AssetDatahub from './AssetDatahub.vue'
 export default {
     name: 'Schedule',
     components: {
-        MoniforCfg,ProcessControl
+        MoniforCfg,ProcessControl,AssetDatahub
     },
+    computed:{guest(){return useSessionStore().cache.userinfo?.role==='guest'}},
     data() {
         return {
             selCat:"list",

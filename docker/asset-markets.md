@@ -147,21 +147,42 @@ python -m wtpy.monitor.OptionChain instruments.json
 选择盘口 Tick 时，CTA 可按报价触达撮合。
 点「查看结果」可读任务状态和收益摘要。
 
-要联调柜台，先准备专用 SimNow 模拟账号。
+可从现有 SimNow 通道读取账户和认证信息。
 将开平规则文件放在 `option/common/actpolicy.yaml`。
 下面的第一条命令只校验所选合约和版本。
 策略构造函数需接受 `name` 和 `code`。
 
 ```bash
-python -m wtpy.monitor.CommodityOptionSim DCE.m2701-C-3000 Example 1
-# 单独设置 WT_OPTION_SIM_USER、WT_OPTION_SIM_PASSWORD、
-# WT_OPTION_SIM_APPID、WT_OPTION_SIM_AUTHCODE 后再启动。
-python -m wtpy.monitor.CommodityOptionSim DCE.m2701-C-3000 Example 1 --start
+python -m wtpy.monitor.CommodityOptionSim DCE.m2701-C-3000 Example 1 \
+  --simnow-profile /run/simnow/td.yaml
 ```
 
-启动命令只连接内置的 SimNow 第二套模拟柜台。
-首次运行请使用独立的空仓仿真账号。
+该命令只校验配置。显式加 `--start` 才启动策略。
+也可用 `WT_OPTION_SIM_PROFILE` 指定只读通道文件。
+支持登记的交易时段第三前置和 7×24 仿真前置。
+同一柜台账户下的策略共用资金和持仓。
 成交、资金、持仓以该柜台回报为准。
+
+## 调度中心怎样采集期权和币对？
+
+各开一个采集进程，订阅列表和历史存储都分开。
+
+1. 在调度中心展开商品期权或加密货币数据中台。
+2. 点已订阅期货查期权链，或点常用币对。
+3. 将合约加入列表，再点「仅保存订阅」。
+4. 点「启动采集」后，关掉网页仍继续采集。
+
+部署时分别运行下面两个管理进程。
+两者各挂载自己的资产目录，初始订阅为空。
+只有币对采集进程读取 `WT_COINBASE_PROXY_FILE`。
+
+```bash
+python -m wtpy.monitor.CollectorControl option
+python -m wtpy.monitor.CollectorControl crypto
+```
+
+管理进程报告的「运行中」表示采集进程已启动。
+实际入库记录可到同资产的历史数据页查看。
 
 ## 怎样分析多个合约？
 

@@ -1,5 +1,6 @@
 """Run one independent archival process. The working directory belongs to its asset."""
 import argparse
+from datetime import date
 import os
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from .AssetMarkets import asset_root, inside, instrument
 from .MarketSubscriptions import _load
 
 
-def native_config(root, asset, symbols):
+def native_config(root, asset, symbols, *, prepare=False):
     from .AssetMarkets import dataset_code
     common = inside(root, "common")
     contracts = _load(inside(root, "common", "contracts.json"))
@@ -16,12 +17,16 @@ def native_config(root, asset, symbols):
     if parser.get("module") != required:
         raise ValueError("该资产采集器需要 " + required)
     codes = []
+    selected = {}
     for symbol in symbols:
         exchange, ticker = instrument(asset, symbol)
         row = contracts.get(exchange, {}).get(ticker)
         if row is None or not dataset_code(asset, exchange, ticker, row):
             raise ValueError("合约不在该资产的基础资料中：" + symbol)
+        if asset == "option" and int(row.get("expiredate") or 0) < int(date.today().strftime("%Y%m%d")):
+            raise ValueError("期权合约已到期：" + symbol)
         codes.append(exchange + "." + ticker)
+        selected.setdefault(exchange, {})[ticker] = row
     bases = {"commodity":"commodities.json", "contract":"contracts.json", "session":"sessions.json", "holiday":"holidays.json"}
     for name in bases.values():
         if not inside(root, "common", name).is_file():
@@ -33,6 +38,15 @@ def native_config(root, asset, symbols):
         parsers=[{**parser, "active":True, "id":asset, "code":",".join(codes)}])
     if not Path(config["statemonitor"]).is_file():
         raise ValueError("请为该资产配置 datahub/statemonitor.yaml 收盘转储时段")
+    if asset == "option" and prepare:
+        from wtpy.StrategyRuntime import atomic_json
+        # Native code filters split on dots, including dots in fractional strikes.
+        # A contract file containing only selected instruments also bounds startup work.
+        subset = inside(root, "datahub", "recording-contracts.json")
+        atomic_json(subset, selected)
+        config["basefiles"]["contract"] = str(subset)
+        config["parsers"][0].pop("code", None)
+        config["parsers"][0].pop("filter", None)
     return config
 
 
@@ -58,13 +72,19 @@ def main():
         else:
             from wtpy import WtDtEngine
             from wtpy.StrategyRuntime import atomic_json
-            config = native_config(root, args.asset, symbols)
+            config = native_config(root, args.asset, symbols, prepare=True)
             # The read-side catalog needs only data locations, never provider credentials.
             atomic_json(inside(root, "datahub", "catalog.json"),
-                        {k:config[k] for k in ("writer", "basefiles")})
+                        {"writer":config["writer"], "basefiles":{**config["basefiles"],
+                         "contract":str(inside(root, "common", "contracts.json"))}})
             engine = WtDtEngine()
             engine.init_with_config(config, {"root":{"level":"info","sinks":[{"type":"console_sink","pattern":"%v"}]}})
-            engine.run(False)
+            import signal
+            from threading import Event
+            stopping = Event()
+            signal.signal(signal.SIGTERM, lambda *_: stopping.set())
+            engine.run(True)
+            stopping.wait()  # WtDtEngine registers its native release with atexit.
 
 
 if __name__ == "__main__":

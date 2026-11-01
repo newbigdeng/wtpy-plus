@@ -24,7 +24,7 @@ function addShown(){
   if(selected.value.length+additions.length>96){message.value='请选择部分合约，一次最多 96 份';return}
   selected.value=[...selected.value,...additions.map(r=>({...r,underlying:listed.value}))]
 }
-defineExpose({stop:()=>desk.value?.stop()})
+defineExpose({stop:()=>desk.value?.stop(),openChain:code=>{underlying.value=code;return search()}})
 const underlying=ref(''),contracts=ref([]),message=ref('')
 let serial=0
 async function search(){

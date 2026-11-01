@@ -19,6 +19,7 @@ from starlette.responses import StreamingResponse
 
 from .AssetMarkets import ASSETS, asset_root, inside, instrument
 from .AssetQuotes import http_quote
+from . import CollectorControl
 from .HistoryCatalog import dataset_entries, public_dataset, selection_bounds
 from .Roles import can_read, can_admin, can_research_read
 from .StrategyLibrary import register_library_routes
@@ -96,6 +97,42 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
         if asset not in ASSETS:
             return None, {"result": -2, "message": "未知资产类别"}
         return user, None
+
+    @app.post("/mgr/assets/{asset}/collector")
+    def collector(request: Request, asset: str, action: str = Body("status"),
+                  symbols: list[str] = Body(default=[], max_length=96), revision: int = Body(0)):
+        user, error = authorize(request, asset)
+        if error:
+            return error
+        if asset not in CollectorControl.ASSETS:
+            return {"result": -2, "message": "请选择期权或加密货币采集器"}
+        root = asset_root(deploy, asset)
+        if action == "status":
+            return {"result": 0, **CollectorControl.state(root)}
+        if not can_admin(user):
+            return {"result": -403, "message": "仅管理员可设置长期采集"}
+        if action not in ("start", "stop", "save"):
+            return {"result": -2, "message": "未知采集操作"}
+        try:
+            state = CollectorControl.change(root, asset, symbols, action, revision)
+            data_mgr.log_action(user, "collector_"+action, asset)
+            return {"result": 0, **state}
+        except (ValueError, OSError) as exc:
+            return {"result": -2, "message": str(exc) if isinstance(exc, ValueError) else "请检查本资产的采集配置"}
+
+    @app.post("/mgr/assets/option/suggestions")
+    def suggestions(request: Request, groupid: str = Body(..., embed=True)):
+        _, error = authorize(request, "option")
+        if error:
+            return error
+        from .OptionChain import subscription_chains
+        from .ResearchServer import monitor_json, upstream_headers
+        snapshot = monitor_json(os.getenv("WT_MONITOR_UPSTREAM", "http://127.0.0.1:8100"),
+                                "/mgr/market/subscriptions", {"groupid": groupid}, upstream_headers(request))
+        if snapshot.get("result") != 0:
+            return {"result": -2, "message": snapshot.get("message") or "无法读取该组合的期货订阅"}
+        return {"result": 0, "chains": subscription_chains(asset_root(deploy, "option"), snapshot),
+                "profile": snapshot["profile_label"]}
 
     @app.post("/mgr/assets/{asset}/quote")
     async def quote(request: Request, asset: str, symbol: str = Body(..., embed=True),

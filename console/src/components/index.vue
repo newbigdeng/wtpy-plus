@@ -27,7 +27,7 @@
 </div>
             </header>
             <nav v-if="isAssetPage" class="wt-asset-nav" aria-label="资产类别">
-                <router-link v-for="(label,key) in assetNames" :key="key" :to="{path:$route.path,query:{asset:key}}" :aria-current="asset===key?'page':undefined">{{label}}</router-link>
+                <router-link v-for="(label,key) in assetNames" :key="key" :to="{path:$route.path,query:{group:$route.query.group,asset:key}}" :aria-current="asset===key?'page':undefined">{{label}}</router-link>
                 <template v-if="$route.path==='/monitor' && asset==='futures'">
                     <router-link :to="{path:'/monitor',query:{asset}}" :aria-current="!externalQuotes?'page':undefined">组合监控</router-link>
                     <router-link :to="{path:'/monitor',query:{asset,view:'quote'}}" :aria-current="externalQuotes?'page':undefined">按需看盘</router-link>

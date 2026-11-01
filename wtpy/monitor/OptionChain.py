@@ -58,6 +58,39 @@ def chain(root, underlying):
     return dict(contracts=sorted(rows,key=lambda r:(r["expiry"] or 0,r["strike"],r["side"])),source=source)
 
 
+def subscription_chains(root, snapshot):
+    """Offer the subscribed month first, or another listed month of that product."""
+    from .MarketSubscriptions import _load
+    from .AssetMarkets import FUTURE
+    reference = inside(root, "reference", "chain.json")
+    native = inside(root, "common", "contracts.json")
+    today = int(datetime.now().strftime("%Y%m%d"))
+    available = {}
+    def add(key, expiry):
+        if expiry and int(expiry) >= today:
+            available[key] = min(available.get(key, int(expiry)), int(expiry))
+    if reference.is_file():
+        for key, rows in _load(reference)["chains"].items():
+            for row in rows:
+                add(key, row["expiry"])
+    if native.is_file():
+        for exchange, rows in _load(native).items():
+            for row in rows.values():
+                if option := row.get("option"):
+                    add(exchange+"."+option["underlying"], row.get("expiredate"))
+    selected = set(snapshot["selected"])
+    result = []
+    for row in snapshot["catalog"]:
+        source = row["subscription_code"]
+        if source not in selected or not FUTURE.fullmatch(row["ticker"]):
+            continue
+        prefix = row["exchange"]+"."+row["product"]
+        months = [k for k in available if k.startswith(prefix) and k[len(prefix):].isdigit()]
+        key = source if source in months else min(months, key=available.get, default=None)
+        result.append(dict(future=source, name=row["product_name"], underlying=key))
+    return result
+
+
 if __name__ == "__main__":
     import argparse
     import os
