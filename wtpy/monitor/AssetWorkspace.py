@@ -9,6 +9,10 @@ from pathlib import Path
 import sys
 import tempfile
 from threading import Lock
+import secrets
+import shutil
+
+from .OptionDeskFeed import DeskRequest, desk_plan
 
 from fastapi import Body, Request
 from starlette.responses import StreamingResponse
@@ -36,40 +40,49 @@ async def ctp_quotes(root, exchange, ticker, mode):
     flows = inside(root, "quotes")
     flows.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=flows) as folder:
-        python = os.environ.get("WT_QUOTE_CTP_PYTHON") or sys.executable
-        process = await asyncio.create_subprocess_exec(python, "-u",
-            str(Path(__file__).with_name("AssetCtpQuote.py")), exchange, ticker, mode, cwd=folder,
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        try:
-            while True:
-                try:
-                    line = await asyncio.wait_for(process.stdout.readline(), timeout=8)
-                except asyncio.TimeoutError:
-                    yield {"heartbeat": True}
-                    continue
-                if not line:
-                    yield {"error": "CTP 行情子进程已退出，请检查行情 SDK 与前置配置"}
-                    return
-                if line.startswith(b"{"):
-                    yield json.loads(line)
-        finally:
-            # The ASGI disconnect cancels the producer. Reap the native API even then.
-            process.stdin.close()
-            async def reap():
-                try:
-                    await asyncio.wait_for(process.wait(), 2)
-                except asyncio.TimeoutError:
-                    with suppress(ProcessLookupError):
-                        process.kill()
-                    await process.wait()
-            import anyio
-            with anyio.CancelScope(shield=True):
-                await reap()
+        async with aclosing(worker_events(folder,"AssetCtpQuote.py",(exchange,ticker,mode))) as events:
+            async for event in events:
+                yield event
 
+
+async def worker_events(folder, script, args=(), plan=None):
+    python = os.environ.get("WT_QUOTE_CTP_PYTHON") or sys.executable
+    process = await asyncio.create_subprocess_exec(python, "-u",
+        str(Path(__file__).with_name(script)), *args, cwd=folder, limit=1024*1024,
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    try:
+        if plan is not None:
+            process.stdin.write(json.dumps(plan).encode()+b"\n")
+            await process.stdin.drain()
+        while True:
+            try:
+                line = await asyncio.wait_for(process.stdout.readline(), timeout=8)
+            except asyncio.TimeoutError:
+                yield {"heartbeat": True}
+                continue
+            if not line:
+                yield {"error": "行情进程已退出，请检查行情和定价依赖"}
+                return
+            if line.startswith(b"{"):
+                yield json.loads(line)
+    finally:
+        # The ASGI disconnect cancels the producer. Reap the native API even then.
+        process.stdin.close()
+        async def reap():
+            try:
+                await asyncio.wait_for(process.wait(), 2)
+            except asyncio.TimeoutError:
+                with suppress(ProcessLookupError):
+                    process.kill()
+                await process.wait()
+        import anyio
+        with anyio.CancelScope(shield=True):
+            await reap()
 
 def register_asset_routes(app, data_mgr, check_auth, deploy):
     monitors, libraries = {}, {}
     lock = Lock()
+    analysis_slots = asyncio.Semaphore(2)
     for asset in ("stock", "option", "crypto"):
         libraries[asset] = register_library_routes(app, data_mgr, check_auth, deploy, asset=asset)
 
@@ -125,6 +138,34 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
             return {"result": 0, **chain(asset_root(deploy, "option"), underlying)}
         except (OSError, KeyError, ValueError) as exc:
             return {"result": -2, "message": str(exc) if isinstance(exc,ValueError) else "无法读取期权合约表"}
+
+    @app.post("/mgr/assets/option/analysis")
+    async def analysis(request: Request, selection: DeskRequest):
+        _, error = await asyncio.to_thread(authorize, request, "option")
+        if error:
+            return error
+        root = asset_root(deploy, "option")
+        try:
+            plan = await asyncio.to_thread(desk_plan,root,selection)
+        except (ValueError, OSError, KeyError):
+            return {"result":-2,"message":"请检查合约所属期货、到期日和价差参数，最多 96 份期权"}
+        async def stream():
+            if analysis_slots.locked():
+                yield json.dumps({"error":"当前分析会话已满，请关闭不用的分析页"})+"\n"
+                return
+            async with analysis_slots:
+                session = secrets.token_hex(12)
+                folder = inside(root,"analysis",session)
+                folder.mkdir(mode=0o700,parents=True)
+                try:
+                    yield json.dumps({"session":session, "subscribed":len(plan["symbols"])})+"\n"
+                    async with aclosing(worker_events(folder,"OptionDeskWorker.py",plan=plan)) as events:
+                        async for event in events:
+                            yield json.dumps(event,ensure_ascii=False,allow_nan=False)+"\n"
+                finally:
+                    shutil.rmtree(folder)
+        return StreamingResponse(stream(),media_type="application/x-ndjson",
+                    headers={"Cache-Control":"no-store","X-Accel-Buffering":"no","Content-Encoding":"identity"})
 
     def get_monitor(asset):
         with lock:
@@ -187,7 +228,7 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
     @app.post("/mgr/assets/{asset}/run")
     def run(request: Request, asset: str, library_id: str = Body(...), version: int = Body(...),
             dataset: str = Body(...), start: str = Body(...), end: str = Body(...),
-            capital: float = Body(..., gt=0, le=1e12)):
+            capital: float = Body(..., gt=0, le=1e12), companions: list[str] = Body(default=[],max_length=12)):
         user, error = authorize(request, asset, research=True)
         if error:
             return error
@@ -208,10 +249,22 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
             kind = source["engine_type"].lower()
             if kind == "hft" and item["period"] != "tick":
                 raise ValueError("HFT 回测需要该合约的 Tick 数据")
-            if asset == "option" and "." in item["ticker"]:
-                raise ValueError("当前 WT 原生回放未支持小数行权价合约")
-            if asset == "option" and (not item.get("expiry") or finish >= item["expiry"]):
-                raise ValueError("商品期权回放须在到期日前结束，当前模型未处理行权交割")
+            if companions:
+                selector = Path(os.environ.get("WT_BACKTEST_RUNTIME", "/opt/wt/cloud/backtest-runtime.json"))
+                settings = json.loads(selector.read_text(encoding="utf-8")) if selector.is_file() else {}
+                if not settings.get("multi_period_replay") or not Path(settings.get("bt_porter_lib","")).is_file():
+                    raise ValueError("多合约回放需配置已通过跨周期验证的原生回测库")
+            if companions and (asset != "option" or not source["accepts_kwargs"] and
+                               "codes" not in {p["name"] for p in source["parameters"]}):
+                raise ValueError("多合约期权回放需要接受 codes 参数的策略")
+            by_id = {row["id"]:row for row in catalog}
+            if asset == "option":
+                for leg_id in (dataset,*companions):
+                    leg = by_id.get(leg_id)
+                    if not leg or "." in leg["ticker"]:
+                        raise ValueError("请选择本期权工作区的整数行权价合约")
+                    if not leg.get("expiry") or finish>=leg["expiry"]:
+                        raise ValueError("回放须在所有选中期权的到期日前结束")
             monitor, owner = get_monitor(asset), user["loginid"]
             with lock:
                 straid = monitor.add_strategy(owner, source["name"] + " v" + str(version), kind)["id"]
@@ -220,7 +273,7 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
                         raise ValueError("策略副本写入失败")
                     fill = "legacy_cta" if kind == "cta" and item["period"] != "tick" else "causal_touch"
                     task = monitor.run_backtest(owner, straid, begin * 10000, finish * 10000 + 2359,
-                                                capital, fill_model=fill, dataset=dataset, catalog=catalog)
+                                                capital, fill_model=fill, dataset=dataset, catalog=catalog, companions=companions)
                 except Exception:
                     monitor.del_strategy(owner, straid)
                     raise

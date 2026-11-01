@@ -13,7 +13,7 @@
     <dl v-if="quote">
       <div v-for="[key,title] in fields" :key="key"><dt>{{title}}</dt><dd>{{quote[key] ?? '—'}}</dd></div>
     </dl>
-    <OptionChain v-if="asset==='option'" @view="value => {draft=value; view()}"/>
+    <OptionChain v-if="asset==='option'" ref="optionChain" :mode="mode" @analyze="stop" @view="value => {draft=value; view()}"/>
   </section>
 </template>
 <script setup>
@@ -23,6 +23,7 @@ const props=defineProps({asset:{type:String,required:true}})
 const examples={stock:'SSE.600000',futures:'SHFE.rb2701',option:'DCE.m2701-C-3000',crypto:'BTC-USD'}
 const names={stock:'股票',futures:'期货',option:'商品期权',crypto:'加密货币'}
 const fields=[['last','最新成交'],['bid','买一'],['ask','卖一'],['time','源端行情时间'],['trading_day','交易日'],['source','行情源']]
+const optionChain=ref(null)
 const mode=ref('session'),draft=ref(''), symbol=ref(''), quote=ref(null), status=ref('')
 let request, timer
 function cancel(){
@@ -32,6 +33,7 @@ function cancel(){
 }
 function stop(){cancel();symbol.value='';quote.value=null;status.value='已停止'}
 function view(){
+  optionChain.value?.stop()
   cancel();symbol.value=draft.value;quote.value=null
   if(symbol.value) refresh()
 }

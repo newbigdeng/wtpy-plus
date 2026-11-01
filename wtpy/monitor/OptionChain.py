@@ -23,7 +23,7 @@ def import_directory(root, filename):
             continue
         key = exchange + "." + item["UnderlyingInstrID"]
         chains.setdefault(key, []).append(dict(symbol=exchange+"."+code, side="看涨" if side=="C" else "看跌",
-            strike=float(strike), expiry=int(item["ExpireDate"].replace("-",""))))
+            strike=float(strike), multiplier=item.get("VolumeMultiple"), expiry=int(item["ExpireDate"].replace("-",""))))
     if not chains:
         raise ValueError("目录中没有有效的国内商品期权")
     directory=inside(root,"reference")
@@ -40,12 +40,14 @@ def chain(root, underlying):
     native = inside(root, "common", "contracts.json")
     rows = []
     if native.is_file():
+        products = inside(root, "common", "commodities.json")
+        rules = _load(products).get(exchange,{}) if products.is_file() else {}
         for code, info in _load(native).get(exchange, {}).items():
             option = info.get("option", {})
             match = OPTION.fullmatch(code)
             if match and option.get("underlying") == future:
                 rows.append(dict(symbol=exchange+"."+code, side="看涨" if match[4]=="C" else "看跌",
-                                 strike=float(option["strikeprice"]), expiry=info.get("expiredate")))
+                                 strike=float(option["strikeprice"]), multiplier=rules.get(info.get("product"),{}).get("volscale"), expiry=info.get("expiredate")))
     source = "WT 本地合约表"
     if not rows:
         path = inside(root,"reference","chain.json")

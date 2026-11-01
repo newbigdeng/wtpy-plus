@@ -652,7 +652,7 @@ class WtBtMon(BtTaskSink):
 
     def run_backtest(self, user:str, straid:str, fromTime:int, endTime:int, capital:float, slippage:int=0,
                      fill_model:str="causal_touch", event_delay:int=0, participation_rate:float=0,
-                     risk=None, dataset=None, *, catalog=None) -> dict:
+                     risk=None, dataset=None, *, catalog=None, companions=()) -> dict:
         from ..wrapper.WtBtWrapper import validate_cta_fill_config
         validate_cta_fill_config(fill_model, event_delay, participation_rate)
         with self._lock:
@@ -682,13 +682,13 @@ class WtBtMon(BtTaskSink):
             if dataset:
                 from .HistoryCatalog import prepare_native_dataset
                 data_meta = prepare_native_dataset(os.environ.get("WT_PLUS_WORKSPACE", "/workspace"),
-                                                  dataset, fromTime, endTime, folder, catalog=catalog)
+                                                  dataset, fromTime, endTime, folder, catalog=catalog, companions=companions)
                 if strategy_type == "hft" and not data_meta["tick_enabled"]:
                     raise ValueError("HFT回测需要真实Tick；不能将K线合成事件冒充真实Tick")
                 if not data_meta["tick_enabled"] and strategy_type == "cta" and fill_model != "legacy_cta":
                     raise ValueError("K线没有真实买卖报价，请选择收盘事件的legacy_cta；报价触达和盘口参与率仅适用Tick")
             with open(os.path.join(folder, "market-data.json"), "w", encoding="utf-8") as output:
-                json.dump({key: data_meta[key] for key in ("code", "period")} if data_meta else {}, output)
+                json.dump({key:data_meta[key] for key in ("code","period","legs") if key in data_meta} if data_meta else {}, output)
 
             # 将策略文件复制到该目录下
             old_path = os.path.join(self.path, user, straid, "MyStrategy.py")

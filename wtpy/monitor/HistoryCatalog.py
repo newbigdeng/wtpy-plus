@@ -159,12 +159,25 @@ def selection_bounds(item, start, end):
     return start, end
 
 
-def prepare_native_dataset(workspace, dataset, start, end, taskfolder, catalog=None):
+def prepare_native_dataset(workspace, dataset, start, end, taskfolder, catalog=None, companions=()):
     with channel_transition_lock:
-        return _prepare_native_dataset(workspace, dataset, start, end, taskfolder, catalog)
+        result = _prepare_native_dataset(workspace, dataset, start, end, taskfolder, catalog)
+        if companions:
+            legs = [dict(code=result["code"],period=result["period"],dataset=dataset)]
+            primary = next(row for row in catalog if row["id"]==dataset)
+            for leg_id in companions:
+                leg = next((row for row in catalog if row["id"]==leg_id), None)
+                if not leg or leg.get("storage")!=primary.get("storage") or leg["basefiles_map"]!=primary["basefiles_map"]:
+                    raise ValueError("附加合约必须来自同一个资产存储与合约表")
+                if leg["code"] in {r["code"] for r in legs} or (leg["period"]=="tick")!=result["tick_enabled"]:
+                    raise ValueError("各腿须为不同合约，且同为 Tick 或同为 K 线")
+                _prepare_native_dataset(workspace,leg_id,start,end,taskfolder,catalog,basefiles=result["basefiles"])
+                legs.append(dict(code=leg["code"],period=leg["period"],dataset=leg_id))
+            result["legs"] = legs
+        return result
 
 
-def _prepare_native_dataset(workspace, dataset, start, end, taskfolder, catalog=None):
+def _prepare_native_dataset(workspace, dataset, start, end, taskfolder, catalog=None, basefiles=None):
     if catalog is None:
         catalog = dataset_entries(workspace)
     item = next((row for row in catalog if row["id"] == dataset), None)
@@ -190,13 +203,15 @@ def _prepare_native_dataset(workspace, dataset, start, end, taskfolder, catalog=
             native_worker(dict(action="export", files=bars["files"], period=bars["period"],
                 exchange=bars["exchange"], ticker=bars["ticker"], start=0, end=end,
                 destination=str(Path(taskfolder)/"market-data")))
-    base = Path(taskfolder)/"market-base"
-    base.mkdir(exist_ok=True)
-    frozen = {}
-    for key, filename in item["basefiles_map"].items():
-        destination = base/Path(filename).name
-        shutil.copyfile(filename, destination)
-        frozen[key] = str(destination)
+    frozen = basefiles
+    if frozen is None:
+        base = Path(taskfolder)/"market-base"
+        base.mkdir(exist_ok=True)
+        frozen = {}
+        for key, filename in item["basefiles_map"].items():
+            destination = base/Path(filename).name
+            shutil.copyfile(filename, destination)
+            frozen[key] = str(destination)
     return dict(snapshot, code=item["code"], period=item["period"], tick_enabled=item["period"]=="tick",
                 basefiles=frozen, model=item["model"], dataset=dataset,
                 source="recorded", start=start, end=end)

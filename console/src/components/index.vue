@@ -1,7 +1,7 @@
 <template>
     <div id="index" class="wt-shell" :class="{'rail-expanded':railExpanded}" v-loading="loading">
         <aside class="wt-rail" aria-label="工作区导航">
-            <button class="wt-brand" aria-label="展开或收起导航" :aria-expanded="railExpanded" @click="toggleRail">W<span>+</span></button><span v-if="railExpanded" class="wt-brand-name">WonderTrader</span>
+            <button class="wt-brand" aria-label="展开或收起导航" :aria-expanded="railExpanded" @click="toggleRail"><img src="@/assets/wt-mark.svg" alt=""/></button><span v-if="railExpanded" class="wt-brand-name">WonderTrader</span>
             <nav class="wt-rail-nav">
                 <el-tooltip v-for="item in navItems" :key="item.path" :content="item.label" placement="right" :enterable="false">
                     <router-link :to="assetLink(item.path)" class="wt-rail-link" :class="{active:$route.path===item.path}" :aria-label="item.label" :aria-current="$route.path===item.path?'page':undefined">
@@ -270,8 +270,8 @@ export default {
 .wt-asset-nav{display:flex;gap:4px;padding:5px 14px;flex-wrap:wrap;border-bottom:1px solid var(--wt-line);background:var(--wt-surface)}.wt-asset-nav a{color:var(--wt-muted);padding:4px 9px;text-decoration:none;font-size:13px}.wt-asset-nav a[aria-current]{color:var(--wt-text);box-shadow:inset 0 -2px currentColor}
 .wt-shell{display:flex;width:100%;height:100%;overflow:hidden;background:var(--wt-bg);color:var(--wt-text)}
 .wt-rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;align-items:center;background:var(--wt-sidebar);border-right:1px solid var(--wt-line);padding:16px 0 12px;z-index:5;transition:width .18s,flex-basis .18s}
-.wt-brand{width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:var(--wt-text);color:var(--wt-surface);border:0;border-radius:10px;font-size:20px;font-weight:650;letter-spacing:-2px;cursor:pointer}
-.wt-brand span{font-size:14px;align-self:flex-start;margin-top:5px;letter-spacing:0;color:var(--wt-surface)}
+.wt-brand{width:36px;height:36px;display:flex;align-items:center;justify-content:center;padding:0;background:transparent;border:0;cursor:pointer}
+.wt-brand img{display:block;width:100%;height:100%}
 .wt-brand-name{font-weight:600;font-size:12px;margin-top:10px;letter-spacing:-.2px}
 .wt-rail-nav{display:flex;flex-direction:column;gap:7px;margin:22px 0 16px;width:100%;align-items:center;min-height:0;overflow-y:auto;scrollbar-width:thin}.wt-rail-nav .wt-rail-link{flex-shrink:0}
 .wt-rail-link{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;width:52px;min-height:54px;border-radius:8px;text-decoration:none;color:var(--wt-muted);transition:background .15s,color .15s;position:relative}

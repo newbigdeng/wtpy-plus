@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import threading
 
 from openctp_ctp import thostmduserapi as md
 
@@ -9,8 +10,11 @@ SESSION_MD = "tcp://182.254.243.31:30013"
 SIMULATION_MD = "tcp://182.254.243.31:40011"
 
 
+_output_lock = threading.Lock()
+
 def emit(**values):
-    print(json.dumps(values, ensure_ascii=True), flush=True)
+    with _output_lock:
+        print(json.dumps(values, ensure_ascii=True), flush=True)
 
 
 def number(value):
@@ -18,9 +22,11 @@ def number(value):
 
 
 class QuoteSpi(md.CThostFtdcMdSpi):
-    def __init__(self, api, exchange, ticker, mode):
+    def __init__(self, api, symbols, mode, sink):
         super().__init__()
-        self.api, self.exchange, self.ticker, self.mode = api, exchange, ticker, mode
+        self.api, self.mode, self.sink = api, mode, sink
+        self.symbols = {ticker:exchange for exchange,ticker in symbols}
+        self.ids = [ticker.encode("ascii") for ticker in self.symbols]
 
     def OnFrontConnected(self):
         request = md.CThostFtdcReqUserLoginField()
@@ -29,47 +35,48 @@ class QuoteSpi(md.CThostFtdcMdSpi):
             request.UserID = os.getenv("WT_QUOTE_CTP_USER", "")
             request.Password = os.getenv("WT_QUOTE_CTP_PASSWORD", "")
         if self.api.ReqUserLogin(request, 1):
-            emit(error="CTP 行情登录请求失败")
+            self.sink(error="CTP 行情登录请求失败")
 
     def OnRspUserLogin(self, login, info, request_id, last):
         if info and info.ErrorID:
-            emit(error="CTP 行情登录失败（%d）" % info.ErrorID)
-        elif self.api.SubscribeMarketData([self.ticker.encode("ascii")], 1):
-            emit(error="CTP 行情订阅请求失败")
+            self.sink(error="CTP 行情登录失败（%d）" % info.ErrorID)
+        elif self.api.SubscribeMarketData(self.ids, len(self.ids)):
+            self.sink(error="CTP 行情订阅请求失败")
 
     def OnRspSubMarketData(self, contract, info, request_id, last):
         if info and info.ErrorID:
-            emit(error="CTP 拒绝订阅（%d）" % info.ErrorID)
+            self.sink(error="CTP 拒绝订阅（%d）" % info.ErrorID)
         else:
-            emit(status="已订阅，等待交易所快照")
+            self.sink(status="已订阅，等待交易所快照")
 
     def OnFrontDisconnected(self, reason):
-        emit(status="行情前置断开，等待重新登录")
+        self.sink(status="行情前置断开，等待重新登录")
 
     def OnRtnDepthMarketData(self, tick):
-        if tick.InstrumentID != self.ticker or (tick.ExchangeID and tick.ExchangeID != self.exchange):
+        exchange = self.symbols.get(tick.InstrumentID)
+        if not exchange or (tick.ExchangeID and tick.ExchangeID != exchange):
             return
         source = "SimNow 7×24 仿真回放" if self.mode == "simulation" else "CTP 交易时段前置"
-        emit(source=source, last=number(tick.LastPrice), bid=number(tick.BidPrice1),
+        self.sink(symbol=exchange+"."+tick.InstrumentID, source=source, last=number(tick.LastPrice), bid=number(tick.BidPrice1),
              ask=number(tick.AskPrice1), bid_size=tick.BidVolume1, ask_size=tick.AskVolume1,
              time=(tick.ActionDay + " " + tick.UpdateTime + ".%03d" % tick.UpdateMillisec).strip(),
              trading_day=tick.TradingDay)
 
 
-def main():
+def run_session(symbols, mode, sink, consume):
     api = md.CThostFtdcMdApi.CreateFtdcMdApi()
-    exchange, ticker, mode = sys.argv[1:]
-    spi = QuoteSpi(api, exchange, ticker, mode)
+    spi = QuoteSpi(api, symbols, mode, sink)
     api.RegisterSpi(spi)
     api.RegisterFront(SIMULATION_MD if mode=="simulation" else os.environ.get("WT_QUOTE_CTP_FRONT", SESSION_MD))
     api.Init()
     try:
         # The monitor closes stdin on disconnect or symbol change.
-        sys.stdin.buffer.read()
+        consume()
     finally:
-        api.UnSubscribeMarketData([ticker.encode("ascii")], 1)
+        api.UnSubscribeMarketData(spi.ids, len(spi.ids))
         api.Release()
 
 
 if __name__ == "__main__":
-    main()
+    exchange, ticker, mode = sys.argv[1:]
+    run_session([(exchange,ticker)],mode,emit,sys.stdin.buffer.read)

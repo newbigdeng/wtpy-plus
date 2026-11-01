@@ -19,7 +19,7 @@ RUN python3 -m venv /opt/wt-venv \
     && if [ "$WITH_CTP_QUOTES" = "1" ]; then \
            apt-get update && apt-get install -y --no-install-recommends locales \
            && localedef --no-archive -i zh_CN -f GB18030 zh_CN.GB18030 \
-           && python -m pip install --no-cache-dir openctp-ctp==6.7.11.0 \
+           && python -m pip install --no-cache-dir openctp-ctp==6.7.11.0 QuantLib==1.39 \
            && python -c "from openctp_ctp import thostmduserapi"; \
        fi \
     && python -m pip check

@@ -41,6 +41,9 @@ def main():
         supplied = {'name': '$STRAID$'}
         if market:
             supplied.update(code=market['code'], period='m1' if market['period']=='tick' else 'd1' if market['period']=='d' else market['period'])
+        if market.get("legs"):
+            supplied["codes"] = [leg["code"] for leg in market["legs"]]
+            supplied["periods"] = {leg["code"]:{"tick":"m1","d":"d1"}.get(leg["period"],leg["period"]) for leg in market["legs"]}
         signature = inspect.signature(candidates[0])
         accepts_kwargs = any(item.kind == inspect.Parameter.VAR_KEYWORD for item in signature.parameters.values())
         strategy = candidates[0](**{key: value for key, value in supplied.items() if key in signature.parameters or accepts_kwargs})

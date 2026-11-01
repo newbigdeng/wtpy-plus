@@ -5,8 +5,7 @@ html *{scrollbar-width:thin;scrollbar-color:var(--wt-line) var(--wt-bg)}
 html[data-wt-theme=dark] .el-button.is-disabled{--el-button-disabled-bg-color:#171717;--el-button-disabled-border-color:#282828;--el-button-disabled-text-color:#777}
 html body #app{font-family:"Segoe UI","Microsoft YaHei",sans-serif;color:var(--wt-text)}
 #index .wt-rail{width:62px;flex-basis:62px;padding-top:12px}
-#index .wt-brand{border-radius:2px;background:var(--wt-accent);color:var(--wt-bg);height:32px;width:34px}
-#index .wt-brand span{color:var(--wt-bg)}
+#index .wt-brand{width:34px;height:34px}
 #index .wt-rail-nav{gap:3px;margin-top:18px}
 #index .wt-rail-link{min-height:48px;border-radius:2px}
 #index .wt-rail-link.active{color:var(--wt-accent)}

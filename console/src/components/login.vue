@@ -1,6 +1,6 @@
 <template>
     <div class="wt-login-page">
-        <div class="wt-login-brand"><span class="wt-login-mark">W<sup>+</sup></span><span>WonderTrader <strong>Plus</strong></span></div>
+        <div class="wt-login-brand"><img class="wt-login-mark" src="@/assets/wt-mark.svg" alt="W+"/><span>WonderTrader <strong>Plus</strong></span></div>
         <main class="wt-login-card">
             <div class="wt-login-eyebrow">YOUR QUANT WORKSPACE</div>
             <h1>回到你的交易工作台</h1>
@@ -89,8 +89,7 @@ export default {
 .wt-login-page{height:100%;min-height:600px;background:#f7f8f4;display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:36px 42px;}
 .wt-login-brand{align-self:flex-start;display:flex;gap:12px;align-items:center;font-size:15px;color:#394233;letter-spacing:-.2px;}
 .wt-login-brand strong{font-weight:500;color:#82916f;}
-.wt-login-mark{display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center;border-radius:10px;background:#282d25;color:white;font-size:20px;font-weight:600;letter-spacing:-2px;}
-.wt-login-mark sup{font-size:12px;align-self:flex-start;letter-spacing:0;margin-top:5px;color:#c7d7b7;}
+.wt-login-mark{width:34px;height:34px;display:block}
 .wt-login-card{width:360px;max-width:100%;margin:auto 0;padding:36px 0 52px;}
 .wt-login-eyebrow{color:#82916f;font-size:10px;font-weight:600;letter-spacing:2.4px;margin-bottom:18px;}
 h1{font-weight:550;letter-spacing:-.6px;font-size:27px;margin:0 0 12px;color:#282f25;}

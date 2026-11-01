@@ -18,20 +18,46 @@ def main():
     parser.add_argument("symbol", help="例如 DCE.m2701-C-3000")
     parser.add_argument("strategy", help="期权策略库 ID")
     parser.add_argument("version", type=int)
+    parser.add_argument("--also", action="append", default=[], metavar="OPTION", help="同一策略的其他商品期权")
+    parser.add_argument("--hedge-underlyings", action="store_true", help="加入这些期权对应的标的期货")
+    parser.add_argument("--analysis-session", help="策略读取的 7×24 分析会话")
     parser.add_argument("--start", action="store_true", help="启动专用 SimNow 模拟账户")
     parser.add_argument("--deploy", default=os.environ.get("WT_DATA_DIR", "/data"))
     args = parser.parse_args()
     root = asset_root(args.deploy, "option")
-    exchange, ticker = instrument("option", args.symbol)
     common = inside(root, "common")
     contracts = _load(inside(root, "common", "contracts.json"))
-    contract = contracts.get(exchange, {}).get(ticker, {})
-    code = dataset_code("option", exchange, ticker, contract)
-    expiry = int(contract.get("expiredate") or 0)
-    if "." in ticker:
-        raise ValueError("当前 WT 原生交易适配器未支持小数行权价合约")
-    if not code or expiry <= int(date.today().strftime("%Y%m%d")):
-        raise ValueError("须选择有到期日且未到期的商品期权")
+    options = list(dict.fromkeys([args.symbol,*args.also]))
+    selected, codes, hedges = {}, [], []
+    for symbol in options:
+        exchange, ticker = instrument("option",symbol)
+        contract = contracts.get(exchange, {}).get(ticker, {})
+        code = dataset_code("option",exchange,ticker,contract)
+        if "." in ticker or not code or int(contract.get("expiredate") or 0)<=int(date.today().strftime("%Y%m%d")):
+            raise ValueError("须选择已登记、未到期的整数行权价商品期权")
+        selected.setdefault(exchange,{})[ticker] = contract
+        codes.append(code)
+        if args.hedge_underlyings:
+            future = contract["option"]["underlying"]
+            info = contracts[exchange].get(future)
+            if not info or not dataset_code("futures",exchange,future,info):
+                raise ValueError("期权工作区的柜台资料缺少标的期货 "+future)
+            selected[exchange][future] = info
+            month_code = code.split(".")[1]
+            hedge = exchange+"."+month_code[:-4]+"."+month_code[-4:]
+            if hedge not in hedges:
+                hedges.append(hedge)
+    params = {"code":codes[0]}
+    if args.also:
+        params["codes"] = codes
+    if args.hedge_underlyings:
+        params["underlyings"] = hedges
+    if args.analysis_session:
+        from .OptionFrames import read_option_frame
+        frame = read_option_frame(root,args.analysis_session,mode="simulation")
+        if not set(options)<=set(r["symbol"] for r in frame["rows"]):
+            raise ValueError("分析会话未包含策略选择的全部期权")
+        params["analysis_session"] = args.analysis_session
     lib = StrategyLibrary(inside(root, "strategies"))
     row = lib.get(args.strategy, args.version, allow_archived=False)
     if row["engine_type"] not in ("CTA","HFT"):
@@ -43,7 +69,10 @@ def main():
     for file in (*bases.values(), fees, inside(root,"common","actpolicy.yaml")):
         if not Path(file).is_file():
             raise ValueError("缺少期权运行资料：" + Path(file).name)
-    print(f"SimNow · {code} · {row['name']} v{args.version} · {row['engine_type']}", flush=True)
+    supported = {p["name"] for p in row["parameters"]}
+    if not row["accepts_kwargs"] and not params.keys()<=supported:
+        raise ValueError("策略构造函数缺少参数：" + ", ".join(sorted(params.keys()-supported)))
+    print(f"SimNow · {', '.join(codes+hedges)} · {row['name']} v{args.version} · {row['engine_type']}", flush=True)
     if not args.start:
         return
     from wtpy import WtEngine, EngineType
@@ -56,8 +85,8 @@ def main():
         login = dict(broker="9999", user=os.environ["WT_OPTION_SIM_USER"], **{"pass":os.environ["WT_OPTION_SIM_PASSWORD"]})
         trader = dict(**login, id="option_sim", active=True, module="TraderCTP", front="tcp://182.254.243.31:40001",
                       appid=os.environ["WT_OPTION_SIM_APPID"], authcode=os.environ["WT_OPTION_SIM_AUTHCODE"])
-        feed = dict(**login, id="option_md", active=True, module="ParserCTP", front="tcp://182.254.243.31:40011", code=args.symbol)
-        atomic_json(work/"contract.json", {exchange:{ticker:contract}})
+        feed = dict(**login, id="option_md", active=True, module="ParserCTP", front="tcp://182.254.243.31:40011", code=",".join(ex+"."+ticker for ex,items in selected.items() for ticker in items))
+        atomic_json(work/"contract.json", selected)
         atomic_json(work/"log.json", {"root":{"level":"info","sinks":[{"type":"console_sink"}]}})
         kind = row["engine_type"]
         config = dict(basefiles={**bases,"contract":str(work/"contract.json"),"utf-8":True},
@@ -73,7 +102,7 @@ def main():
         spec = importlib.util.spec_from_file_location("option_strategy", file)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        strategy = getattr(module,row["class_name"])(name=row["id"],code=code)
+        strategy = getattr(module,row["class_name"])(name=row["id"],**params)
         engine = WtEngine(EngineType.ET_CTA if kind=="CTA" else EngineType.ET_HFT, str(work/"log.json"))
         try:
             with tempfile.NamedTemporaryFile(mode="w",dir=work,suffix=".json",encoding="utf-8") as stream:
