@@ -3,6 +3,7 @@
     <h2>{{backtest?'原生策略回测':'本地历史数据'}} · {{name}}</h2>
     <button @click="load">刷新</button><p role="status">{{message}}</p>
     <template v-if="backtest">
+      <OptionExpiry v-if="asset==='option'" :api="api" :runs="runs"/>
       <form @submit.prevent="run">
         <label>策略版本<select v-model="selected"><option v-for="s in strategies" :key="s.id" :value="s">{{s.name}} · v{{s.version}}</option></select></label>
         <template v-if="asset==='option'">
@@ -56,6 +57,7 @@
 </template>
 <script setup>
 import {computed,ref,onMounted,watch} from 'vue'
+import OptionExpiry from './OptionExpiry.vue'
 const props=defineProps({asset:String,name:String,backtest:Boolean})
 const detail=ref(null)
 const datasets=ref([]),strategies=ref([]),runs=ref([]),selected=ref(null),dataset=ref('')

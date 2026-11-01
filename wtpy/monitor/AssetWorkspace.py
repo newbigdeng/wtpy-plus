@@ -33,7 +33,14 @@ def asset_catalog(root, asset):
         from .CryptoArchive import catalog
         return catalog(root)
     profile = {"id": "local", "root": str(root), "datahub_id": asset + "-collector"}
-    return dataset_entries(root, profiles_by_group={asset: [profile]}, asset=asset)
+    profiles = [profile]
+    if asset == "option":
+        archive = inside(root, "history", "native")
+        for folder in sorted(archive.glob("*/datahub/catalog.json")):
+            source = folder.parents[1]
+            profiles.append(dict(id="expiry-"+source.name, root=str(inside(archive, source.name)),
+                                 label="历史导入 "+source.name, datahub_id="archive"))
+    return dataset_entries(root, profiles_by_group={asset: profiles}, asset=asset)
 
 
 async def ctp_quotes(root, exchange, ticker, mode):
@@ -389,4 +396,6 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
         except (OSError,ValueError,TimeoutError) as exc:
             return {"result":-2,"message":str(exc)}
 
+    from .OptionExpiryRoutes import register as register_expiry_routes
+    register_expiry_routes(app, deploy, authorize, get_monitor)
     return monitors

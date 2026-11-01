@@ -726,6 +726,10 @@ Plus 当前支持 CTA 和 HFT，不支持 Python UFT。
 历史记录存在，不代表当前柜台连接正常。
 回测和监控结果不能证明策略盈利。
 
+商品期权可在回测页续算移仓、行权和指派。
+旧仓、新仓、期货盯市和权利金分别列示。
+操作见[跨期日线回测](docker/asset-markets.md#怎样把旧期权换成新期权)。
+
 原版项目：[wtpy](https://github.com/wondertrader/wtpy)。
 配套项目：[WonderTrader-plus](https://github.com/newbigdeng/WonderTrader-plus)。
 许可：[MIT](LICENSE)。
