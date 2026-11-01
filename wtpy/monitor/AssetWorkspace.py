@@ -307,6 +307,8 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
                 detail.update(capital=run.get("capital"), funds=monitor.get_bt_funds(owner, strategy, task),
                               trades=None if trades is None else trades[offset:offset+100],
                               trade_count=None if trades is None else len(trades))
+                ledger=inside(Path(monitor.path),owner,strategy,"backtests",task,"outputs_bt",task,"factory-ledger.json")
+                if ledger.is_file():detail["leg_report"]=json.loads(ledger.read_bytes())
             except (OSError, ValueError) as exc:
                 return {"result": -2, "message": "无法读取回测账簿：" + str(exc)}
         return {"result": 0, "detail": detail}
@@ -411,4 +413,6 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
     register_expiry_routes(app, deploy, authorize, get_monitor)
     from .ReportChart import registered
     registered(app, deploy, authorize)
+    from .OptionFactory import register as register_factories
+    register_factories(app, deploy, authorize, asset_catalog, get_monitor, lock)
     return monitors

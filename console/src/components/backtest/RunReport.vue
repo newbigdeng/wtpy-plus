@@ -5,6 +5,11 @@
   <ReportCandles v-if="task && assetName && modeName" :asset="asset" :mode="mode" :task="task" :strategy="route.query.strategy"/>
   <template v-if="report"><p>任务状态 {{statusLabel}} <span v-if="report.error"> · {{report.error}}</span></p>
     <section class="cards"><div v-for="[label,value] in metrics" :key="label"><small>{{label}}</small><strong>{{value}}</strong></div></section>
+    <section v-if="report.legs"><h2>各腿成交与期末持仓</h2>
+      <p>{{report.legs.factory}} · v{{report.legs.version}} · {{report.legs.units}} 份组合 · 期末交易日 {{report.legs.day}}。{{report.legs.fees}}。</p>
+      <div class="scroll"><table><thead><tr><th>合约</th><th>成交笔数</th><th>买入手数</th><th>卖出手数</th><th>手续费（元）</th><th>期末净仓（手）</th></tr></thead>
+        <tbody><tr v-for="leg in report.legs.legs" :key="leg.code"><td>{{leg.code}}</td><td>{{leg.trades}}</td><td>{{leg.buys}}</td><td>{{leg.sells}}</td><td>{{fmt(leg.fee)}}</td><td>{{leg.position}}</td></tr></tbody></table></div>
+    </section>
     <h2>{{hasEquity?'资金曲线':'累计净盈亏曲线'}}</h2>
     <TerminalChart v-if="points.length" class="chart" :plot="equityPlot" label="回测资金曲线"/><p v-else>该任务没有可用的资金记录。</p>
     <p>{{note}}</p>
@@ -68,7 +73,7 @@ async function load(){
         d=(await post('/mgr/assets/'+asset.value+'/detail',{strategy:q.strategy,task:q.task,report:true,offset})).detail
       }
       const cap=d.capital??d.summary?.capital
-      value={status:d.status,error:d.error,capital:cap,points:(d.funds||[]).map(f=>[f.date,(cap??0)+f.dynbalance]),summary:d.summary||{},trades:d.trades||[],total:d.trade_count,fees:d.funds?.at(-1)?.fee}
+      value={status:d.status,error:d.error,capital:cap,points:(d.funds||[]).map(f=>[f.date,(cap??0)+f.dynbalance]),summary:d.summary||{},trades:d.trades||[],total:d.trade_count,fees:d.funds?.at(-1)?.fee,legs:d.leg_report,name:d.leg_report?.title}
     }else throw Error('报告类型与资产不匹配')
     if(id===sequence)report.value=value
   }catch(e){if(id===sequence)error.value=e.message}finally{if(id===sequence)busy.value=false}

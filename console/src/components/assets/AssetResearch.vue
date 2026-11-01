@@ -20,6 +20,7 @@
         <button v-for="[id,label] in panels" :key="id" :aria-pressed="panel===id" @click="panel=id">{{label}}</button>
       </div>
       <OptionExpiry v-if="panel==='expiry'" :api="api" :runs="runs"/>
+      <FactoryResearch v-else-if="panel==='factory'" :api="api" @launched="load"/>
       <section v-else-if="panel==='code'">
         <h3>{{selected?selected.name+' · v'+selected.version:'尚未选择策略'}}</h3><p>{{selected?.description}}</p>
         <router-link v-if="selected && manage" :to="{path:'/strategies',query:{asset,edit:selected.id}}">在策略管理中编辑新版本 →</router-link>
@@ -85,9 +86,12 @@
 <script setup>
 import {computed,ref,onMounted,onUnmounted,watch} from 'vue'
 import OptionExpiry from './OptionExpiry.vue'
+import FactoryResearch from './FactoryResearch.vue'
+import {useRoute} from 'vue-router'
 const props=defineProps({asset:String,name:String,backtest:Boolean})
-const search=ref(''),panel=ref('config'),source=ref(''),sourceError=ref(''),manage=ref(false)
-const panels=computed(()=>[['config','原生回测配置'],['code','策略代码'],['tasks','任务记录'],...(props.asset==='option'?[['expiry','跨期清算']]:[])])
+const route=useRoute()
+const search=ref(''),panel=ref(props.asset==='option' && route.query.panel==='factory'?'factory':'config'),source=ref(''),sourceError=ref(''),manage=ref(false)
+const panels=computed(()=>[['config','原生回测配置'],['code','策略代码'],['tasks','任务记录'],...(props.asset==='option'?[['factory','C++ 期权策略'],['expiry','跨期清算']]:[])])
 const tips={stock:'使用股票工作区的合约、交易时段和历史数据。',option:'多腿行情在同一任务回放。跨期清算用于检查移仓、行权和指派。',crypto:'逐笔成交没有买卖盘口。选择完整分钟线回放，不能据此模拟排队成交。'}
 const statusText=s=>({running:'运行中',completed:'已完成',failed:'失败',interrupted:'已中断',stopped:'已停止'})[s] || s
 const detail=ref(null)

@@ -653,7 +653,7 @@ class WtBtMon(BtTaskSink):
 
     def run_backtest(self, user:str, straid:str, fromTime:int, endTime:int, capital:float, slippage:int=0,
                      fill_model:str="causal_touch", event_delay:int=0, participation_rate:float=0,
-                     risk=None, dataset=None, *, catalog=None, companions=(), fee_per_lot=None) -> dict:
+                     risk=None, dataset=None, *, catalog=None, companions=(), fee_per_lot=None, factory=None) -> dict:
         from ..wrapper.WtBtWrapper import validate_cta_fill_config
         validate_cta_fill_config(fill_model, event_delay, participation_rate)
         with self._lock:
@@ -701,7 +701,8 @@ class WtBtMon(BtTaskSink):
             # 将策略文件复制到该目录下
             old_path = os.path.join(self.path, user, straid, "MyStrategy.py")
             new_path = os.path.join(folder, "MyStrategy.py")
-            shutil.copyfile(old_path, new_path)
+            if factory is None:
+                shutil.copyfile(old_path, new_path)
 
             # 初始化目录下的配置文件
             old_path = os.path.join(self.path, "template/configbt.json")
@@ -720,6 +721,9 @@ class WtBtMon(BtTaskSink):
                 replay.setdefault("basefiles", {}).update(data_meta["basefiles"])
                 if data_meta["basefiles"].get("fee"):
                     replay["fees"] = data_meta["basefiles"]["fee"]
+            if factory is not None:
+                from .OptionFactory import freeze
+                freeze(factory,Path(folder),config,btid,fromTime,endTime)
             content = json.dumps(config, ensure_ascii=False, indent=2)
 
             f = open(new_path, "w", encoding="UTF-8")
@@ -735,7 +739,7 @@ class WtBtMon(BtTaskSink):
             shutil.copyfile(old_path, new_path)
 
             new_path = os.path.join(folder, "runBT.py")
-            content = runner_template()
+            content = runner_template() if factory is None else "from wtpy.monitor.OptionFactory import replay\nreplay('$STRAID$', $CAPITAL$)\n"
             commodity_file = config.get("replayer", {}).get("basefiles", {}).get("commodity", "")
             basefiles = os.path.dirname(os.path.abspath(os.path.join(folder, commodity_file)))
             content = content.replace("$BASEFILES$", basefiles.replace("\\", "/") + "/")

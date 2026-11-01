@@ -111,6 +111,9 @@ def dataset_entries(workspace="/workspace", manifest_path=None, refresh=False, *
                 code = dataset_code(asset, exchange, ticker, info)
                 if not code and ticker in underlyings:
                     code = dataset_code("futures", exchange, ticker, info)
+                    if code and exchange=="CZCE" and re.fullmatch(r"[A-Za-z]+\d{3}",ticker):
+                        year=int(info["expiredate"])//10000
+                        code=exchange+"."+product+"."+str(year//10%10)+ticker[len(product):]
                 if not code:
                     continue
                 for period, directory in (("tick","ticks"),("m1","min1"),("m5","min5"),("d","day")):
