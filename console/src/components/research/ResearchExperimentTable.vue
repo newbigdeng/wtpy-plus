@@ -4,7 +4,7 @@
   <el-table-column label="行情与日期" min-width="220"><template #default="{row}"><span>{{row.code||row.dataset}}</span><small>{{stamp(row.start)}} — {{stamp(row.end)}} · {{period(row.period)}}</small></template></el-table-column>
   <el-table-column label="状态" min-width="170"><template #default="{row}"><span :class="'research-status '+row.status">{{status(row.status)}}</span><el-progress v-if="['running','queued','preparing'].includes(row.status)" :percentage="Math.min(100,Math.max(0,Number(row.progress)||0))" :stroke-width="4"/><small v-if="row.error" class="research-task-error">{{row.error}}</small></template></el-table-column>
   <el-table-column label="成交" width="80"><template #default="{row}">{{row.metrics?.trade_count??'—'}}</template></el-table-column>
-  <el-table-column label="操作" width="155" fixed="right"><template #default="{row}"><el-button text @click="$emit('open',row)" :aria-label="'查看研究实验 '+row.id">{{row.status==='completed'?'阅读成果':'查看详情'}}</el-button><el-button v-if="canEdit&&['running','queued','preparing'].includes(row.status)" text type="danger" @click="$emit('cancel',row)">取消</el-button></template></el-table-column>
+  <el-table-column label="操作" width="155" fixed="right"><template #default="{row}"><el-button text @click="$emit('open',row)" :aria-label="'查看研究实验 '+row.id">{{row.status==='completed'?'阅读成果':'查看详情'}}</el-button><router-link v-if="row.status==='completed'" :to="{name:'run-report',query:{asset:'futures',mode:'research',task:row.id}}">报告</router-link><el-button v-if="canEdit&&['running','queued','preparing'].includes(row.status)" text type="danger" @click="$emit('cancel',row)">取消</el-button></template></el-table-column>
  </el-table>
 </template>
 <script>

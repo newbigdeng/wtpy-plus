@@ -30,7 +30,7 @@
     <small>默认实值空仓按全部被指派回放；有实际配对记录时可覆盖。保证金和费用使用输入值，空头期权保证金以收盘价估算。</small>
     <p role="status">{{message}}</p>
     <label v-if="ids.length">已保存的本账户回测<select v-model="saved" @change="restore"><option value="">选择记录</option><option v-for="i in ids" :key="i">{{i}}</option></select></label>
-    <section v-if="report"><h4>逐笔资金</h4><p>{{report.source}}</p>
+    <section v-if="report"><router-link :to="{name:'run-report',query:{asset:'option',mode:'expiry',task:saved}}">查看跨期统计报告</router-link><h4>逐笔资金</h4><p>{{report.source}}</p>
       <table><thead><tr><th v-for="s in ['交易日','事件','合约','仓位变动 / 盯市手数','价格','权利金','期货盯市','费用','现金余额']" :key="s">{{s}}</th></tr></thead>
       <tbody><tr v-for="(e,i) in report.events" :key="i"><td v-for="key in ['day','action','code','qty','price','premium','variation','fee','cash']" :key="key">{{e[key] ?? '—'}}</td></tr></tbody></table>
       <h4>日终持仓和资金</h4><table><thead><tr><th v-for="h in ['交易日','期权手数','期货手数','现金余额','期权市值','权益','保证金','可用资金']" :key="h">{{h}}</th></tr></thead>

@@ -40,6 +40,7 @@ const router=createRouter({
                 {path: '/monitor', name:"monitor", component: Monitor},
                 {path:'/deploy',redirect:'/monitor'},
                 {path: '/backtest', name:"backtest", component: Backtest},
+                {path:'/backtest/report',name:'run-report',component:()=>import('@/components/backtest/RunReport.vue')},
                 {path: '/strategies', name:"strategies", component: StrategyLibrary},
                 {path: '/history', name:"history", component: HistoryManager},
                 {path:'/terminal',name:'terminal',component:TerminalWorkspace},
@@ -65,7 +66,7 @@ router.beforeEach(async to=>{
  const role=session.cache.userinfo.role
  if(role==='guest')return true
  if(to.path==='/admins'&&!['admin','superman'].includes(role))return '/monitor'
- if(to.path==='/backtest'&&!['researcher','admin','superman'].includes(role))return '/monitor'
+ if(['/backtest','/backtest/report'].includes(to.path)&&!['researcher','admin','superman'].includes(role))return '/monitor'
  if(['/research','/terminal'].includes(to.path)&&!['researcher','admin','superman'].includes(role))return '/monitor'
  if(to.path==='/schedule'&&to.query.tab!=='subscriptions'&&!['admin','superman'].includes(role))return '/monitor'
  return true

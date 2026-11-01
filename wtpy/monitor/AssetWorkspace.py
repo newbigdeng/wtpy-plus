@@ -285,7 +285,8 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
         return {"result": 0, "runs": tasks}
 
     @app.post("/mgr/assets/{asset}/detail")
-    def detail(request: Request, asset: str, strategy: str = Body(...), task: str = Body(...)):
+    def detail(request: Request, asset: str, strategy: str = Body(...), task: str = Body(...),
+               report: bool = Body(False), offset: int = Body(0,ge=0)):
         user, error = authorize(request, asset, research=True)
         if error:
             return error
@@ -298,7 +299,17 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
                 row["id"] == task for row in monitor.get_backtests(owner, strategy) or []):
             return {"result": -2, "message": "本账户没有该任务"}
         result = monitor.get_backtest_detail(owner, strategy, task)
-        return {"result": 0, "detail": {key:result[key] for key in ("status","returncode","summary","error","state")}}
+        detail = {key:result[key] for key in ("status","returncode","summary","error","state")}
+        if report:
+            run = next(row for row in monitor.get_backtests(owner, strategy) if row["id"] == task)
+            try:
+                trades = monitor.get_bt_trades(owner, strategy, task)
+                detail.update(capital=run.get("capital"), funds=monitor.get_bt_funds(owner, strategy, task),
+                              trades=None if trades is None else trades[offset:offset+100],
+                              trade_count=None if trades is None else len(trades))
+            except (OSError, ValueError) as exc:
+                return {"result": -2, "message": "无法读取回测账簿：" + str(exc)}
+        return {"result": 0, "detail": detail}
 
     @app.post("/mgr/assets/{asset}/run")
     def run(request: Request, asset: str, library_id: str = Body(...), version: int = Body(...),

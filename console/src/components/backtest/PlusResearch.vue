@@ -39,7 +39,7 @@
    <el-table-column prop="code" label="合约" min-width="130"/>
    <el-table-column label="状态 / 进度" min-width="150"><template #default="{row}"><span :class="'plus-state '+row.status">{{stateName(row.status)}}</span><el-progress v-if="['queued','running'].includes(row.status)" :percentage="Math.min(100,Math.max(0,Number(row.progress)||0))" :stroke-width="3" :show-text="false"/></template></el-table-column>
    <el-table-column label="回放Tick" width="120"><template #default="{row}">{{row.processed||0}} / {{row.total||0}}</template></el-table-column>
-   <el-table-column label="操作" width="150"><template #default="{row}"><el-button link @click="open(row)">详情</el-button><el-button v-if="['queued','running'].includes(row.status)" link type="danger" @click="stop(row)">停止</el-button></template></el-table-column>
+   <el-table-column label="操作" width="150"><template #default="{row}"><el-button link @click="open(row)">详情</el-button><router-link :to="{name:'run-report',query:{asset:'futures',mode:'plus',task:row.id}}">报告</router-link><el-button v-if="['queued','running'].includes(row.status)" link type="danger" @click="stop(row)">停止</el-button></template></el-table-column>
   </el-table>
   <section v-if="detail?.task" ref="detailPanel" class="plus-detail">
    <div class="plus-detail-heading"><h3>{{detail.task.label||'仿真详情'}}</h3><span :class="'plus-state '+detail.task.status">{{stateName(detail.task.status)}}</span><el-button link @click="loadDetail">刷新详情</el-button><el-button link @click="closeDetail">收起</el-button></div>
