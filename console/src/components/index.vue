@@ -27,14 +27,19 @@
 </div>
             </header>
             <nav v-if="isAssetPage" class="wt-asset-nav" aria-label="资产类别">
-                <router-link v-for="(label,key) in assetNames" :key="key" :to="{path:$route.name==='run-report'?'/backtest/reports':$route.path,query:{group:$route.query.group,asset:key}}" :aria-current="asset===key?'page':undefined">{{label}}</router-link>
+                <router-link v-for="(label,key) in assetNames" :key="key" :to="{path:$route.name==='run-report'?'/backtest/reports':$route.path,query:{group:$route.query.group,view:$route.path==='/history'?$route.query.view:undefined,asset:key}}" :aria-current="asset===key?'page':undefined">{{label}}</router-link>
                 <template v-if="$route.path==='/monitor' && asset==='futures'">
                     <router-link :to="{path:'/monitor',query:{asset}}" :aria-current="!externalQuotes?'page':undefined">组合监控</router-link>
                     <router-link :to="{path:'/monitor',query:{asset,view:'quote'}}" :aria-current="externalQuotes?'page':undefined">按需看盘</router-link>
                 </template>
             </nav>
+            <nav v-if="$route.path==='/history'" class="wt-asset-nav" aria-label="历史数据功能">
+                <router-link :to="{path:'/history',query:{asset}}" :aria-current="$route.query.view!=='backfill'?'page':undefined">历史目录</router-link>
+                <router-link :to="{path:'/history',query:{asset,group:$route.query.group,view:'backfill'}}" :aria-current="$route.query.view==='backfill'?'page':undefined">补充历史数据</router-link>
+            </nav>
             <main class="wt-workspace" :class="'workspace-'+$route.path.slice(1)">
                 <AssetQuote v-if="externalQuotes" :key="asset" :asset="asset"/>
+                <HistoryBackfill v-else-if="$route.path==='/history' && $route.query.view==='backfill'" :key="asset" :asset="asset" :name="assetNames[asset]"/>
                 <AssetHistory v-else-if="asset!=='futures' && $route.path==='/history'" :key="asset" :asset="asset" :name="assetNames[asset]"/>
                 <router-view v-else :key="isAssetPage?asset:undefined" @notify="handleNotify"/>
             </main>
@@ -97,6 +102,7 @@
 
 <script>
 import AssetQuote from './assets/AssetQuote.vue';
+import HistoryBackfill from './history/HistoryBackfill.vue';
 import AssetHistory from './history/AssetHistory.vue';
 import WtIcon from './common/WtIcon.vue';
 import ProcessControl from './common/ProcessControl.vue';
@@ -150,7 +156,7 @@ export default {
                 return false;        
         }
     },
-    components:{ WtIcon,ProcessControl,AssetQuote,AssetHistory },
+    components:{ WtIcon,ProcessControl,AssetQuote,AssetHistory,HistoryBackfill },
     data () {
         return {
            assetNames:{stock:'股票',futures:'期货',option:'期权',crypto:'加密货币'},

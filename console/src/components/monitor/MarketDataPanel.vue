@@ -1,7 +1,7 @@
 <template>
   <section class="market-data" aria-label="历史行情补数">
     <header class="market-heading">
-      <div><h2>行情数据</h2><p>从数据源补充历史行情，供看盘和回测读取。</p></div>
+      <div><h2>期货历史补数</h2><p>从数据源补充历史行情，供看盘和回测读取。</p></div>
       <el-button :loading="loading" @click="load">刷新状态</el-button>
     </header>
 
@@ -172,9 +172,9 @@ export default {
     jobType(job) { return this.jobIncomplete(job)?'warning':({ queued: 'info', running: 'warning', completed: 'success', failed: 'danger' })[job.status] || 'info'; },
     providerLabel(value) { return this.providers.find(item => item.id === value)?.label || value; },
     periodLabel(value) { return ({ d: '日线', m1: '1 分钟', m5: '5 分钟', tick: 'Tick' })[value] || value; },
-    openTerminal() { this.$router.replace({ query: { ...this.$route.query, tab: 'terminal' } }); }
+    openTerminal() { this.$router.push({path:'/monitor',query:{asset:'futures',group:this.groupid,tab:'terminal'}}); }
   },
-  mounted() { this.load(); },
+  mounted() { const q=this.$route.query;this.historyCode=q.code||'';this.load().then(()=>{if(q.period&&this.periods.some(p=>p.value===q.period))this.period=q.period;if(q.start&&q.end)this.dates=[q.start,q.end]}); },
   beforeUnmount() { this.disposed = true; clearTimeout(this.poll); }
 };
 </script>

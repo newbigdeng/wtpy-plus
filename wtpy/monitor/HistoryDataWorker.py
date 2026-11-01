@@ -18,7 +18,7 @@ def paths(payload):
     if period not in ("d", "m1", "m5"):
         raise ValueError("补数周期仅支持 d、m1、m5")
     exchange, ticker = payload["exchange"], payload["ticker"]
-    if not all(re.fullmatch(r"[A-Za-z0-9_]+", value) for value in (exchange, ticker)):
+    if not re.fullmatch(r"[A-Za-z0-9_]+", exchange) or not re.fullmatch(r"[A-Za-z0-9_-]+", ticker):
         raise ValueError("合约代码无效")
     folder = {"d": "day", "m1": "min1", "m5": "min5"}[period]
     storage = Path(payload["storage"])

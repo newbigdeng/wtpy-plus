@@ -29,18 +29,18 @@ from .WtBtMon import WtBtMon
 def asset_catalog(root, asset):
     if asset == "futures":
         raise ValueError("请使用期货工作区的数据目录")
-    if asset == "crypto":
-        from .CryptoArchive import catalog
-        return catalog(root)
     profile = {"id": "local", "root": str(root), "datahub_id": asset + "-collector"}
     profiles = [profile]
-    if asset == "option":
-        archive = inside(root, "history", "native")
-        for folder in sorted(archive.glob("*/datahub/catalog.json")):
-            source = folder.parents[1]
-            profiles.append(dict(id="expiry-"+source.name, root=str(inside(archive, source.name)),
-                                 label="历史导入 "+source.name, datahub_id="archive"))
-    return dataset_entries(root, profiles_by_group={asset: profiles}, asset=asset)
+    archive = inside(root, "history", "native")
+    for folder in sorted(archive.glob("*/datahub/catalog.json")):
+        source = folder.parents[1]
+        profiles.append(dict(id="expiry-"+source.name, root=str(inside(archive, source.name)),
+                             label="历史导入 "+source.name, datahub_id="archive"))
+    entries = dataset_entries(root, profiles_by_group={asset: profiles}, asset=asset)
+    if asset == "crypto":
+        from .CryptoArchive import catalog
+        entries.extend(catalog(root))
+    return entries
 
 
 async def ctp_quotes(root, exchange, ticker, mode):
@@ -386,7 +386,9 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
                 raise ValueError("成交记录无买卖盘口，请选择分钟线回测")
             if fee_per_lot is not None and asset!="option":
                 raise ValueError("按手试算手续费仅用于期权工作区")
-            if ("fee" not in item["basefiles_map"] and fee_per_lot is None) or not all(Path(f).is_file() for f in item["basefiles_map"].values()):
+            if (not {"session","holiday","contract","commodity"} <= item["basefiles_map"].keys() or
+                    ("fee" not in item["basefiles_map"] and fee_per_lot is None) or
+                    not all(Path(f).is_file() for f in item["basefiles_map"].values())):
                 raise ValueError("请补齐该资产的合约、交易时段、交易日历与费用文件")
             source = libraries[asset].get(library_id, version, allow_archived=False)
             kind = source["engine_type"].lower()

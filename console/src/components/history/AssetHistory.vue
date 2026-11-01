@@ -39,7 +39,7 @@
 <script setup>
 import {computed,onMounted,reactive,ref,watch} from 'vue'
 const props=defineProps({asset:String,name:String})
-const intro={option:'按标的、方向和行权价查找已采集或导入的合约。标的期货单独标记。',stock:'按市场、证券代码和周期查找股票工作区的历史数据。',crypto:'查找币对的逐笔成交和分钟线。分钟数含首尾时段，回测只使用完整分钟。'}
+const intro={option:'按标的、方向和行权价查找已采集或导入的合约。标的期货单独标记。',stock:'按市场、证券代码和周期查找股票工作区的历史数据。',crypto:'查找币对的逐笔成交、分钟线和外部日线。交易所日线与本地成交分别保存。'}
 const periods={d:'日线',m1:'1 分钟',m5:'5 分钟',tick:'Tick 快照',trades:'逐笔成交'}
 const order=['d','m5','m1','tick','trades']
 const placeholder=computed(()=>({option:'搜索合约、标的或行权价',stock:'搜索证券代码或市场',crypto:'搜索币对，如 BTC-USD'})[props.asset])
@@ -47,7 +47,8 @@ const rows=ref([]),loading=ref(true),error=ref(''),query=ref(''),start=ref(''),e
 const low=ref(''),high=ref('')
 const filters=reactive({venue:'',period:'',profile:'',underlying:'',kind:'',expiry:''})
 const facets=computed(()=>[['venue',props.asset==='stock'?'市场':'交易所'],['period','周期'],['profile','来源'],...(props.asset==='option'?[['underlying','标的期货'],['kind','合约类型'],['expiry','到期月份']]:[])].map(([key,label])=>({key,label})))
-const profile=r=>r.profileid==='local'?'本地工作区':r.profileid?.startsWith('expiry-')?'历史导入 · '+r.profileid.slice(7):r.profileid || r.source || ''
+const vendors={edb:'信易 EDB',sina:'新浪财经',tushare:'Tushare',tencent:'腾讯证券',eastmoney:'东方财富',exchange:'Coinbase Exchange',advanced:'Coinbase Advanced Trade'}
+const profile=r=>vendors[r.profileid?.replace(/^expiry-feed-/,'')] || (r.profileid==='local'?'本地工作区':r.profileid?.startsWith('expiry-')?'历史导入 · '+r.profileid.slice(7):r.profileid || r.source || '')
 const kind=r=>r.leg_type==='future'?'标的期货':({C:'看涨',P:'看跌'})[r.side] || '未标注'
 const day=v=>String(v || '').slice(0,8)
 function stamp(v){const s=String(v||'');return /^\d{8}/.test(s)?s.slice(0,4)+'-'+s.slice(4,6)+'-'+s.slice(6,8)+(s.length>=12?' '+s.slice(8,10)+':'+s.slice(10,12):''):'—'}
