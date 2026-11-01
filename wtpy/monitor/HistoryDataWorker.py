@@ -121,6 +121,9 @@ def merge(payload, helper):
 
 
 def run(payload):
+    if payload["action"] == "report_candles":
+        from wtpy.monitor.ReportChart import candles
+        return candles(payload, WtDataHelper())
     if payload["action"] == "option_replay_risk":
         from wtpy.monitor.OptionReplayRisk import report
         return report(payload)

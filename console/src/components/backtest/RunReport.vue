@@ -1,7 +1,8 @@
 <template><article class="run-report">
-  <router-link :to="{name:'backtest-reports',query:{asset,mode,strategy:route.query.strategy}}">← 回测报告列表</router-link>
+  <router-link :to="{name:'backtest-reports',query:{asset}}">← 回测报告列表</router-link>
   <header><div><small>{{assetName}} / {{modeName}}</small><h1>回测统计报告</h1><p>{{strategyName}} · {{task}}</p></div><button @click="load" :disabled="busy">刷新报告</button></header>
   <p v-if="busy || error" role="status">{{error || '正在读取任务流水…'}}</p>
+  <ReportCandles v-if="task && assetName && modeName" :asset="asset" :mode="mode" :task="task" :strategy="route.query.strategy"/>
   <template v-if="report"><p>任务状态 {{statusLabel}} <span v-if="report.error"> · {{report.error}}</span></p>
     <section class="cards"><div v-for="[label,value] in metrics" :key="label"><small>{{label}}</small><strong>{{value}}</strong></div></section>
     <h2>{{hasEquity?'资金曲线':'累计净盈亏曲线'}}</h2>
@@ -22,6 +23,7 @@
 import {ref,computed,watch} from 'vue'
 import {useRoute} from 'vue-router'
 import TerminalChart from '../terminal/TerminalChart.vue'
+import ReportCandles from './ReportCandles.vue'
 const route=useRoute(),report=ref(null),page=ref(1),busy=ref(false),error=ref('')
 const asset=computed(()=>route.query.asset||'futures'),mode=computed(()=>route.query.mode||'native'),task=computed(()=>route.query.task)
 const assetName=computed(()=>({stock:'股票',option:'商品期权',crypto:'加密货币',futures:'期货'})[asset.value])

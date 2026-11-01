@@ -15,6 +15,8 @@ function draw(){
    option.legend={textStyle:{color},top:0}
    option.grid.top=38
    Object.assign(option.yAxis,props.plot.axis || {})
+   if(props.plot.tooltip)option.tooltip=props.plot.tooltip
+   if(props.plot.zoom)option.dataZoom=props.plot.zoom
  }
  chart.setOption({...option,backgroundColor:'transparent',textStyle:{color},animation:false},true)
 }

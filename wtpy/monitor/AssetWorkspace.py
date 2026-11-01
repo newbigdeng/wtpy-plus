@@ -409,4 +409,6 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
 
     from .OptionExpiryRoutes import register as register_expiry_routes
     register_expiry_routes(app, deploy, authorize, get_monitor)
+    from .ReportChart import registered
+    registered(app, deploy, authorize)
     return monitors
