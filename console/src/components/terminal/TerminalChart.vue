@@ -3,6 +3,7 @@
 import {ref,watch,onMounted,onBeforeUnmount,nextTick} from 'vue'
 import * as echarts from 'echarts'
 const props=defineProps({series:{type:Array,default:()=>[]},graph:{type:Object,default:null},plot:{type:Object,default:null},label:{type:String,default:'数据曲线'}})
+const emit=defineEmits(['select'])
 const host=ref(null);let chart,observer
 function draw(){
  if(!chart)return
@@ -29,6 +30,6 @@ function draw(){
  chart.setOption({...option,backgroundColor:'transparent',textStyle:{color},animation:false},true)
 }
 watch(()=>[props.series,props.graph,props.plot],()=>nextTick(draw),{deep:true})
-onMounted(()=>{chart=echarts.init(host.value);observer=new ResizeObserver(()=>chart.resize());observer.observe(host.value);window.addEventListener('wt-theme-change',draw);draw()})
+onMounted(()=>{chart=echarts.init(host.value);chart.on('click',e=>{if(e.componentType==='series')emit('select',e.dataIndex)});observer=new ResizeObserver(()=>chart.resize());observer.observe(host.value);window.addEventListener('wt-theme-change',draw);draw()})
 onBeforeUnmount(()=>{observer?.disconnect();window.removeEventListener('wt-theme-change',draw);chart?.dispose()})
 </script>

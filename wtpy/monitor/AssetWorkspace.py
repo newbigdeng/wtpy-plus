@@ -194,10 +194,18 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
             return {"result": -2, "message": message}
 
         async def stream():
-            stream = ctp_quotes(asset_root(deploy, asset), exchange, ticker, mode)
+            root=asset_root(deploy, asset)
+            saved_minute=None
+            stream = ctp_quotes(root, exchange, ticker, mode)
             yield json.dumps({"status": "已请求交易时段前置，等待行情" if mode=="session" else "已请求 SimNow 仿真前置，等待行情"}) + "\n"
             async with aclosing(stream):
                 async for event in stream:
+                    if asset=="option" and mode=="session" and event.get("source"):
+                        from .OptionWatchArchive import save_depth
+                        minute=event.get("time","")[:14]
+                        if minute!=saved_minute:
+                            await asyncio.to_thread(save_depth,root,exchange,ticker,event)
+                            saved_minute=minute
                     yield json.dumps(event, ensure_ascii=True) + "\n"
 
         return StreamingResponse(stream(), media_type="application/x-ndjson",
@@ -212,6 +220,16 @@ def register_asset_routes(app, data_mgr, check_auth, deploy):
             return {"result":0, **suggestions(asset_root(deploy,"option"),prefix,futures)}
         except (ValueError,OSError):
             return {"result":-2,"message":"无法读取期权目录，请稍后重试"}
+
+    @app.post("/mgr/assets/option/watch")
+    def option_watch(request: Request, symbol: str = Body(...,max_length=42), period: str = Body("d"),
+                     end: str | None = Body(None)):
+        _, error=authorize(request,"option")
+        if error:return error
+        from .OptionWatchArchive import view
+        try:return {"result":0, **view(asset_root(deploy,"option"),symbol,period,end)}
+        except (ValueError,OSError,KeyError,TypeError) as exc:
+            return {"result":-2,"message":str(exc) if type(exc) is ValueError else "无法读取所选合约的历史行情"}
 
     @app.post("/mgr/assets/option/daily-bars")
     def daily_bars(request: Request, symbol: str = Body(...,embed=True,max_length=42)):

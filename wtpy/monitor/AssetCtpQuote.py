@@ -60,7 +60,7 @@ class QuoteSpi(md.CThostFtdcMdSpi):
         self.sink(symbol=exchange+"."+tick.InstrumentID, source=source, last=number(tick.LastPrice), bid=number(tick.BidPrice1),
              ask=number(tick.AskPrice1), bid_size=tick.BidVolume1, ask_size=tick.AskVolume1,
              time=(tick.ActionDay + " " + tick.UpdateTime + ".%03d" % tick.UpdateMillisec).strip(),
-             trading_day=tick.TradingDay)
+             trading_day=tick.TradingDay, volume=tick.Volume, oi=number(tick.OpenInterest), amount=number(tick.Turnover))
 
 
 def run_session(symbols, mode, sink, consume):

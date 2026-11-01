@@ -121,6 +121,12 @@ def merge(payload, helper):
 
 
 def run(payload):
+    if payload["action"] == "option_watch_ticks":
+        from wtpy.monitor.OptionWatchArchive import decode_ticks
+        return decode_ticks(payload,WtDataHelper())
+    if payload["action"] == "option_watch_bars":
+        from wtpy.monitor.OptionWatchArchive import decode_native
+        return decode_native(payload,WtDataHelper())
     if payload["action"] == "report_candles":
         from wtpy.monitor.ReportChart import candles
         return candles(payload, WtDataHelper())

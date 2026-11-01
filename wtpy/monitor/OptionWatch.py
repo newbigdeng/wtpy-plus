@@ -52,7 +52,7 @@ def directory(reference, native, reference_stamp, native_stamp):
                 match = OPTION.fullmatch(code)
                 if option and match:
                     symbol = exchange + "." + code
-                    rows[symbol] = dict(symbol=symbol, side="看涨" if match[4]=="C" else "看跌",
+                    rows[symbol] = dict(rows.get(symbol,{}), symbol=symbol, side="看涨" if match[4]=="C" else "看跌",
                                         strike=float(match[5]), expiry=item.get("expiredate"),
                                         underlying=exchange+"."+option["underlying"])
     return rows

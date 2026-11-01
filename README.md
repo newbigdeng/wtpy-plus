@@ -743,6 +743,17 @@ Plus 当前支持 CTA 和 HFT，不支持 Python UFT。
 旧仓、新仓、期货盯市和权利金分别列示。
 操作见[跨期日线回测](docker/asset-markets.md#怎样把旧期权换成新期权)。
 
+## 商品期权看盘能回看什么？
+
+选择一个合约，就能切换日 K、1 分钟和 5 分钟。
+点击蜡烛可看对应时间的成交与估值。
+
+- 先读 WT 已采集的 K 线和 Tick（逐笔快照）。
+- 缺少的行情只按当前合约和周期补取。
+- 估值另读其标的期货，只配对同一时刻的收盘价。
+- 盘口、估值与合约资料按时间存进该合约的历史库。
+- 没有同期盘口或无法反推波动率时，页面保留空值。
+
 原版项目：[wtpy](https://github.com/wondertrader/wtpy)。
 配套项目：[WonderTrader-plus](https://github.com/newbigdeng/WonderTrader-plus)。
 许可：[MIT](LICENSE)。

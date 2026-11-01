@@ -4,13 +4,13 @@
     <AssetShortcuts v-if="asset==='crypto'||asset==='option'" :asset="asset" :group="$route.query.group" @pick="shortcut"/>
     <form @submit.prevent="view">
       <label v-if="asset==='option'||asset==='futures'">{{asset==='option'?'看盘模式':'行情环境'}}
-        <select v-model="mode" @change="switchMode"><option v-if="asset==='option'" value="history">公开日线</option><option value="session">CTP 交易时段行情</option><option value="simulation">CTP 7×24 仿真回放</option></select>
+        <select v-model="mode" @change="switchMode"><option v-if="asset==='option'" value="history">历史看盘</option><option value="session">CTP 交易时段行情</option><option value="simulation">CTP 7×24 仿真回放</option></select>
       </label>
       <label v-if="asset==='option'">期权合约 <OptionPicker v-model="draft" label="期权合约" placeholder="输入 DCE、品种或合约代码" @pick="selectContract"/></label>
       <label v-else>交易所代码 <input v-model.trim="draft" :placeholder="examples[asset]" required maxlength="42"></label>
       <button>查看行情</button><button v-if="symbol" type="button" @click="stop">停止</button>
     </form>
-    <p v-if="asset==='option'" class="hint">输入交易所或品种，按 Tab 选中当前候选。公开日线可在休市时查看；切换到 CTP 可加看盘口。</p>
+    <p v-if="asset==='option'" class="hint">输入交易所或品种，按 Tab 选中当前候选。休市也能看日 K、分钟 K 和历史估值；CTP 模式另接实时快照。</p>
     <p v-else class="hint">输入一个标的开始接收快照。切换标的或离开页面会停止接收。</p>
     <p role="status">{{ symbol }} {{ status }}</p>
     <dl v-if="quote">

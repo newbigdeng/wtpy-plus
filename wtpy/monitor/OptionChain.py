@@ -26,7 +26,8 @@ def save_directory(root, payload):
             continue
         key = exchange + "." + item["UnderlyingInstrID"]
         chains.setdefault(key, []).append(dict(symbol=exchange+"."+code, side="看涨" if side=="C" else "看跌",
-            strike=float(strike), multiplier=item.get("VolumeMultiple"), expiry=int(item["ExpireDate"].replace("-",""))))
+            strike=float(strike), multiplier=item.get("VolumeMultiple"), tick=item.get("PriceTick"),
+            name=item.get("InstrumentName"), expiry=int(item["ExpireDate"].replace("-",""))))
     if not chains:
         raise ValueError("目录中没有有效的国内商品期权")
     directory=inside(root,"reference")
