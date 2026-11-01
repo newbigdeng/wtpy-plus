@@ -652,7 +652,7 @@ class WtBtMon(BtTaskSink):
 
     def run_backtest(self, user:str, straid:str, fromTime:int, endTime:int, capital:float, slippage:int=0,
                      fill_model:str="causal_touch", event_delay:int=0, participation_rate:float=0,
-                     risk=None, dataset=None) -> dict:
+                     risk=None, dataset=None, *, catalog=None) -> dict:
         from ..wrapper.WtBtWrapper import validate_cta_fill_config
         validate_cta_fill_config(fill_model, event_delay, participation_rate)
         with self._lock:
@@ -682,7 +682,7 @@ class WtBtMon(BtTaskSink):
             if dataset:
                 from .HistoryCatalog import prepare_native_dataset
                 data_meta = prepare_native_dataset(os.environ.get("WT_PLUS_WORKSPACE", "/workspace"),
-                                                  dataset, fromTime, endTime, folder)
+                                                  dataset, fromTime, endTime, folder, catalog=catalog)
                 if strategy_type == "hft" and not data_meta["tick_enabled"]:
                     raise ValueError("HFT回测需要真实Tick；不能将K线合成事件冒充真实Tick")
                 if not data_meta["tick_enabled"] and strategy_type == "cta" and fill_model != "legacy_cta":
@@ -701,7 +701,8 @@ class WtBtMon(BtTaskSink):
             f = open(old_path, "r", encoding="UTF-8")
             content = f.read()
             f.close()
-            content = content.replace("$BTID$", btid).replace("$TASKDIR$", folder).replace("$MQURL$", WtBtTask.ipc_url(btid))
+            content = content.replace("$BTID$", btid).replace("$TASKDIR$", folder.replace(os.sep, "/"))
+            content = content.replace("$MQURL$", WtBtTask.ipc_url(btid).replace(os.sep, "/"))
             config = json.loads(content)
             config.setdefault("env", {})["mocker"] = strategy_type
             if data_meta:

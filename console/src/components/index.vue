@@ -4,7 +4,7 @@
             <button class="wt-brand" aria-label="展开或收起导航" :aria-expanded="railExpanded" @click="toggleRail">W<span>+</span></button><span v-if="railExpanded" class="wt-brand-name">WonderTrader</span>
             <nav class="wt-rail-nav">
                 <el-tooltip v-for="item in navItems" :key="item.path" :content="item.label" placement="right" :enterable="false">
-                    <router-link :to="item.path" class="wt-rail-link" :class="{active:$route.path===item.path}" :aria-label="item.label" :aria-current="$route.path===item.path?'page':undefined">
+                    <router-link :to="assetLink(item.path)" class="wt-rail-link" :class="{active:$route.path===item.path}" :aria-label="item.label" :aria-current="$route.path===item.path?'page':undefined">
                         <WtIcon :name="item.icon"/><span class="wt-rail-label">{{item.label}}</span>
                     </router-link>
                 </el-tooltip>
@@ -26,8 +26,17 @@
                 </el-dropdown>
 </div>
             </header>
+            <nav v-if="isAssetPage" class="wt-asset-nav" aria-label="资产类别">
+                <router-link v-for="(label,key) in assetNames" :key="key" :to="{path:$route.path,query:{asset:key}}" :aria-current="asset===key?'page':undefined">{{label}}</router-link>
+                <template v-if="$route.path==='/monitor' && asset==='futures'">
+                    <router-link :to="{path:'/monitor',query:{asset}}" :aria-current="!externalQuotes?'page':undefined">组合监控</router-link>
+                    <router-link :to="{path:'/monitor',query:{asset,view:'quote'}}" :aria-current="externalQuotes?'page':undefined">按需看盘</router-link>
+                </template>
+            </nav>
             <main class="wt-workspace" :class="'workspace-'+$route.path.slice(1)">
-                <router-view @notify="handleNotify"/>
+                <AssetQuote v-if="externalQuotes" :key="asset" :asset="asset"/>
+                <AssetResearch v-else-if="asset!=='futures' && ['/backtest','/history'].includes($route.path)" :key="$route.path+asset" :asset="asset" :name="assetNames[asset]" :backtest="$route.path==='/backtest'"/>
+                <router-view v-else :key="isAssetPage?asset:undefined" @notify="handleNotify"/>
             </main>
             <footer class="wt-statusbar"><strong>WT / TERMINAL</strong><span>{{roleName}}</span><span>行情、研究与交易状态独立核对</span><time>{{terminalClock}} CST</time></footer>
 
@@ -87,6 +96,8 @@
 </template>
 
 <script>
+import AssetQuote from './assets/AssetQuote.vue';
+import AssetResearch from './assets/AssetResearch.vue';
 import WtIcon from './common/WtIcon.vue';
 import ProcessControl from './common/ProcessControl.vue';
 import { themeState, setTheme } from '@/js/theme.js';
@@ -97,6 +108,9 @@ import { useSessionStore } from '@/store.js';
 export default {
     name: 'index',
     computed: {
+        isAssetPage(){return ['/monitor','/backtest','/history','/strategies'].includes(this.$route.path)},
+        asset(){return Object.hasOwn(this.assetNames,this.$route.query.asset)?this.$route.query.asset:'futures'},
+        externalQuotes(){return this.$route.path==='/monitor' && (this.asset!=='futures'||this.$route.query.view==='quote')},
         commandPages(){return this.navItems.filter(item=>item.label.includes(this.commandQuery))},
         filteredCommandGroups(){return this.commandGroups.filter(item=>(item.name+' '+item.id).toLowerCase().includes(this.commandQuery.toLowerCase()))},
         theme(){return themeState.value},
@@ -135,9 +149,10 @@ export default {
                 return false;        
         }
     },
-    components:{ WtIcon,ProcessControl },
+    components:{ WtIcon,ProcessControl,AssetQuote,AssetResearch },
     data () {
         return {
+           assetNames:{stock:'股票',futures:'期货',option:'期权',crypto:'加密货币'},
            terminalClock:'',showConcepts:false,showCommands:false,commandQuery:'',commandGroups:[],
            concepts:[['组合','一起运行的一组策略。组合把各策略目标合并，再交给执行器。'],['策略理论持仓','策略想持有的数量。它可能尚未成交，与账户实际持仓不同。'],['交易通道','连接柜台的适配器。委托、成交、账户资金由它回报。'],['通道环境','柜台地址、账号、数据和运行目录的一套独立配置。切换前须停止组合。'],['引擎账簿','WT 记录的策略和组合损益。它不是柜台资金证明。'],['柜台账簿','交易账户回报的持仓、权益、保证金和手续费。请同时查看快照时间。'],['暂停决策','不再调用策略的决策回调。订单、成交回报仍继续处理；不会自动平仓。'],['过滤策略','把该策略对组合目标的贡献改为零。执行器调整账户净持仓，理论持仓保留。'],['风控预警','提示阈值超限。后台预警默认不下单，人工过滤与原生风控分别配置。'],['Plus 回测','历史行情走实盘引擎和交易适配器，再由模拟柜台撮合。']],
            railExpanded:localStorage.getItem('wt.workspace.railExpanded')==='true',
@@ -152,6 +167,7 @@ export default {
         }
     },
     methods: {
+        assetLink(path){return ['/monitor','/backtest','/history','/strategies'].includes(path) && this.isAssetPage && this.asset!=='futures'?{path,query:{asset:this.asset}}:path},
         openCommands(){this.commandQuery='';this.showCommands=true;this.loadCommandGroups()},
         loadCommandGroups(){this.$api.getGroups(result=>{if(result.result===0)this.commandGroups=result.groups||[]})},
         runPage(path,group){this.showCommands=false;this.$router.push({path,query:group?{group}:{}})},
@@ -251,6 +267,7 @@ export default {
 
 
 <style scoped>
+.wt-asset-nav{display:flex;gap:4px;padding:5px 14px;flex-wrap:wrap;border-bottom:1px solid var(--wt-line);background:var(--wt-surface)}.wt-asset-nav a{color:var(--wt-muted);padding:4px 9px;text-decoration:none;font-size:13px}.wt-asset-nav a[aria-current]{color:var(--wt-text);box-shadow:inset 0 -2px currentColor}
 .wt-shell{display:flex;width:100%;height:100%;overflow:hidden;background:var(--wt-bg);color:var(--wt-text)}
 .wt-rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;align-items:center;background:var(--wt-sidebar);border-right:1px solid var(--wt-line);padding:16px 0 12px;z-index:5;transition:width .18s,flex-basis .18s}
 .wt-brand{width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:var(--wt-text);color:var(--wt-surface);border:0;border-radius:10px;font-size:20px;font-weight:650;letter-spacing:-2px;cursor:pointer}

@@ -24,11 +24,16 @@ class StrategyLibrary:
 
     @contextmanager
     def locked(self):
-        import fcntl
         with library_lock:
             self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
             with (self.root / ".library.lock").open("a") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
+                if os.name == "nt":
+                    import msvcrt
+                    lock.seek(0)
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(lock, fcntl.LOCK_EX)
                 yield
 
     def _index(self):
@@ -109,19 +114,27 @@ class StrategyLibrary:
             atomic_json(self.root / "library.json", index)
 
 
-def register_library_routes(app, data_mgr, check_auth, deploy_dir, bt_mon_provider=None):
-    library = StrategyLibrary.for_deployment(deploy_dir)
-    app.state.strategy_library = library
+def register_library_routes(app, data_mgr, check_auth, deploy_dir, bt_mon_provider=None, *, asset="futures"):
+    from .AssetMarkets import asset_root, inside
+    if asset == "futures":
+        prefix = "/mgr"
+        library = StrategyLibrary.for_deployment(deploy_dir)
+        app.state.strategy_library = library
+    else:
+        prefix = "/mgr/assets/" + asset
+        library = StrategyLibrary(inside(asset_root(deploy_dir, asset), "strategies"))
 
     def authorize(request, token, write=False):
         ok, info = check_auth(request, token)
         if not ok:
             return None, info
+        if asset != "futures" and (info.get("role")=="guest" or info.get("products")):
+            return None, {"result": -403, "message":"当前账户没有该资产目录权限"}
         if write and not can_admin(info):
             return None, {"result": -403, "message": "仅管理员可修改策略库"}
         return info, None
 
-    @app.post("/mgr/strategy_library", tags=["策略库"])
+    @app.post(prefix + "/strategy_library", tags=["策略库"])
     def listing(request: Request, engine_type: str = Body(None, embed=True), token: str = Body(None, embed=True)):
         info, error = authorize(request, token)
         if error:
@@ -133,7 +146,7 @@ def register_library_routes(app, data_mgr, check_auth, deploy_dir, bt_mon_provid
                 row.pop("accepts_kwargs", None)
         return {"result": 0, "strategies": rows, "can_manage": can_admin(info)}
 
-    @app.post("/mgr/strategy_library_get", tags=["策略库"])
+    @app.post(prefix + "/strategy_library_get", tags=["策略库"])
     def get(request: Request, library_id: str = Body(..., embed=True), version: int = Body(None, embed=True), token: str = Body(None, embed=True)):
         info, error = authorize(request, token)
         if error:
@@ -148,18 +161,18 @@ def register_library_routes(app, data_mgr, check_auth, deploy_dir, bt_mon_provid
         except (OSError, ValueError) as exc:
             return {"result": -2, "message": str(exc) if isinstance(exc, ValueError) else "策略版本无法读取"}
 
-    @app.post("/mgr/strategy_library_template", tags=["策略库"])
+    @app.post(prefix + "/strategy_library_template", tags=["策略库"])
     def template(request: Request, engine_type: str = Body("CTA", embed=True), token: str = Body(None, embed=True)):
         info, error = authorize(request, token, True)
         if error:
             return error
         from .BacktestTemplates import strategy_template
         try:
-            return {"result": 0, "source": strategy_template(engine_type.lower())}
+            return {"result": 0, "source": strategy_template(engine_type.lower(), default_code="SHFE.rb.2701" if asset == "futures" else "")}
         except ValueError as exc:
             return {"result": -2, "message": str(exc)}
 
-    @app.post("/mgr/strategy_library_save", tags=["策略库"])
+    @app.post(prefix + "/strategy_library_save", tags=["策略库"])
     def save(request: Request, library_id: str = Body(..., embed=True), name: str = Body(..., embed=True), source: str = Body(..., embed=True), description: str = Body("", embed=True), base_version: int = Body(None, embed=True), token: str = Body(None, embed=True)):
         info, error = authorize(request, token, True)
         if error:
@@ -171,7 +184,7 @@ def register_library_routes(app, data_mgr, check_auth, deploy_dir, bt_mon_provid
         except (OSError, ValueError) as exc:
             return {"result": -2, "message": str(exc) if isinstance(exc, ValueError) else "策略版本保存失败"}
 
-    @app.post("/mgr/strategy_library_delete", tags=["策略库"])
+    @app.post(prefix + "/strategy_library_delete", tags=["策略库"])
     def remove(request: Request, library_id: str = Body(..., embed=True), base_version: int = Body(..., embed=True), token: str = Body(None, embed=True)):
         info, error = authorize(request, token, True)
         if error:
@@ -183,7 +196,10 @@ def register_library_routes(app, data_mgr, check_auth, deploy_dir, bt_mon_provid
         except (OSError, ValueError) as exc:
             return {"result": -2, "message": str(exc) if isinstance(exc, ValueError) else "策略删除失败"}
 
-    @app.post("/mgr/strategy_library_research", tags=["策略库"])
+    if asset != "futures":
+        return library
+
+    @app.post(prefix + "/strategy_library_research", tags=["策略库"])
     def research(request: Request, token: str = Body(None, embed=True)):
         info, error = authorize(request, token, True)
         if error:
@@ -193,7 +209,7 @@ def register_library_routes(app, data_mgr, check_auth, deploy_dir, bt_mon_provid
         return {"result": 0, "strategies": [{"id": row["id"], "name": row["name"],
             "engine_type": row.get("strategy_type", "cta").upper()} for row in rows]}
 
-    @app.post("/mgr/strategy_library_import_research", tags=["策略库"])
+    @app.post(prefix + "/strategy_library_import_research", tags=["策略库"])
     def import_research(request: Request, research_id: str = Body(..., embed=True), library_id: str = Body(..., embed=True), token: str = Body(None, embed=True)):
         info, error = authorize(request, token, True)
         if error:

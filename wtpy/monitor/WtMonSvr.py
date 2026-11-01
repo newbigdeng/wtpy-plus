@@ -387,6 +387,8 @@ class WtMonSvr(WatcherSink):
                 await asyncio.to_thread(self.__plus_mon__.shutdown)
             if self.__bt_mon__ is not None:
                 await asyncio.to_thread(self.__bt_mon__.shutdown)
+            for monitor in self._asset_replays.values():
+                await asyncio.to_thread(monitor.shutdown)
             await asyncio.to_thread(self._dog.shutdown, self.stop_apps_on_shutdown)
             await self.push_svr.stop()
 
@@ -1145,6 +1147,9 @@ class WtMonSvr(WatcherSink):
         register_library_routes(app, self.__data_mgr__,
                                 lambda request, token: check_auth(request, token, self.__sec_key__), self.deploy_dir,
                                 bt_mon_provider=lambda: self.__bt_mon__)
+        from .AssetWorkspace import register_asset_routes
+        self._asset_replays = register_asset_routes(app, self.__data_mgr__,
+            lambda request, token: check_auth(request, token, self.__sec_key__), self.deploy_dir)
         register_risk_library_routes(app, self.__data_mgr__,
                                      lambda request, token: check_auth(request, token, self.__sec_key__))
         register_history_catalog_routes(app, self.__data_mgr__, self._dog,

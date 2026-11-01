@@ -121,6 +121,18 @@ def merge(payload, helper):
 
 
 def run(payload):
+    if payload["action"] == "crypto_bars":
+        from wtpy.monitor.CryptoArchive import replay_bars
+        period, ticker = payload["period"], payload["ticker"]
+        bars = [WTSBarStruct(**bar) for bar in replay_bars(payload["archive"], ticker, period, payload["start"], payload["end"])]
+        if not bars:
+            raise ValueError("区间内没有完整的分钟线")
+        root = Path(payload["destination"])
+        output = root/"his"/{"m1":"min1", "m5":"min5"}[period]/"COINBASE"/(ticker+".dsb")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if not WtDataHelper().store_bars(str(output),(WTSBarStruct*len(bars))(*bars),len(bars),period):
+            raise ValueError("分钟线快照写入失败")
+        return {"storage":str(root), "rows":len(bars)}
     if payload["action"] == "cnequity":
         from cnequity.query import load
         from datetime import datetime

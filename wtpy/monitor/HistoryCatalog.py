@@ -73,16 +73,20 @@ def _inspect_many(entries, refresh=False):
     return entries
 
 
-def dataset_entries(workspace="/workspace", manifest_path=None, refresh=False, *, periods=None, group_filter=None):
+def dataset_entries(workspace="/workspace", manifest_path=None, refresh=False, *, periods=None, group_filter=None,
+                    profiles_by_group=None, asset="futures"):
     """IDs are configuration identities, never user paths or arbitrary hashes."""
     entries, contexts, owners = [], [], {}
-    for groupid, profiles in load_profiles(manifest_file(workspace, manifest_path)).items():
+    from .AssetMarkets import dataset_code
+    if profiles_by_group is None:
+        profiles_by_group = load_profiles(manifest_file(workspace, manifest_path))
+    for groupid, profiles in profiles_by_group.items():
         if group_filter is not None and not group_filter(groupid):
             continue
         for profile in profiles:
             root = Path(profile["root"]).resolve()
             folder = root/"datahub"
-            config_path = folder/"dtcfg.ctp.yaml"
+            config_path = folder/("catalog.json" if asset != "futures" else "dtcfg.ctp.yaml")
             if not config_path.is_file():
                 continue
             config = _load(config_path)
@@ -102,9 +106,9 @@ def dataset_entries(workspace="/workspace", manifest_path=None, refresh=False, *
         for exchange, rows in contracts.items():
             for ticker, info in rows.items():
                 product = info.get("product", "")
-                if not product or not ticker.startswith(product):
+                code = dataset_code(asset, exchange, ticker, info)
+                if not code:
                     continue
-                code = exchange+"."+product+"."+ticker[len(product):]
                 for period, directory in (("tick","ticks"),("m1","min1"),("m5","min5"),("d","day")):
                     if periods is not None and period not in periods:
                         continue
@@ -131,12 +135,14 @@ def dataset_entries(workspace="/workspace", manifest_path=None, refresh=False, *
                         bytes=sum(path.stat().st_size for path in files),
                         formats=sorted({path.suffix[1:].upper() for path in files}),
                         model="recorded_tick" if period == "tick" else "closed_bar_only")
+                    if asset == "option":
+                        item["expiry"] = int(info.get("expiredate") or 0)
                     entries.append(item)
     return _inspect_many(entries, refresh=refresh)
 
 
 def public_dataset(item):
-    hidden = {"files", "basefiles", "basefiles_map", "storage", "profile_root", "collector", "collectors", "storage_groups", "ticker", "exchange", "kind"}
+    hidden = {"archive","files", "basefiles", "basefiles_map", "storage", "profile_root", "collector", "collectors", "storage_groups", "ticker", "exchange", "kind"}
     return {key: value for key, value in item.items() if key not in hidden}
 
 
@@ -153,32 +159,37 @@ def selection_bounds(item, start, end):
     return start, end
 
 
-def prepare_native_dataset(workspace, dataset, start, end, taskfolder):
+def prepare_native_dataset(workspace, dataset, start, end, taskfolder, catalog=None):
     with channel_transition_lock:
-        return _prepare_native_dataset(workspace, dataset, start, end, taskfolder)
+        return _prepare_native_dataset(workspace, dataset, start, end, taskfolder, catalog)
 
 
-def _prepare_native_dataset(workspace, dataset, start, end, taskfolder):
-    catalog = dataset_entries(workspace)
+def _prepare_native_dataset(workspace, dataset, start, end, taskfolder, catalog=None):
+    if catalog is None:
+        catalog = dataset_entries(workspace)
     item = next((row for row in catalog if row["id"] == dataset), None)
     if item is None:
         raise ValueError("历史数据集不存在，请刷新历史数据管理")
     start, end = selection_bounds(item, start, end)
-    # Validate the requested interval separately from earlier warm-up bars.
-    selected = native_worker(dict(action="inspect", files=item["files"], period=item["period"], start=start, end=end))
-    if not selected["rows"]:
-        raise ValueError("所选时间段没有行情，不创建空回测")
-    snapshot = native_worker(dict(action="export", files=item["files"], period=item["period"],
-        exchange=item["exchange"], ticker=item["ticker"], start=start if item["period"]=="tick" else 0, end=end,
-        destination=str(Path(taskfolder)/"market-data")))
-    # Native CTA still needs its main bars when Tick drives fills. Preserve actual
-    # earlier bars for indicator warm-up; the replayer controls their visibility.
-    for bars in catalog:
-        if bars["period"] == "tick" or bars["id"] == item["id"] or bars["code"] != item["code"] or bars["storage"] != item["storage"] or not bars["rows"]:
-            continue
-        native_worker(dict(action="export", files=bars["files"], period=bars["period"],
-            exchange=bars["exchange"], ticker=bars["ticker"], start=0, end=end,
+    if "archive" in item:
+        snapshot = native_worker(dict(action="crypto_bars", archive=item["archive"], ticker=item["ticker"],
+            period=item["period"], start=start, end=end, destination=str(Path(taskfolder)/"market-data")))
+    else:
+        # Validate the requested interval separately from earlier warm-up bars.
+        selected = native_worker(dict(action="inspect", files=item["files"], period=item["period"], start=start, end=end))
+        if not selected["rows"]:
+            raise ValueError("所选时间段没有行情，不创建空回测")
+        snapshot = native_worker(dict(action="export", files=item["files"], period=item["period"],
+            exchange=item["exchange"], ticker=item["ticker"], start=start if item["period"]=="tick" else 0, end=end,
             destination=str(Path(taskfolder)/"market-data")))
+        # Native CTA still needs its main bars when Tick drives fills. Preserve actual
+        # earlier bars for indicator warm-up; the replayer controls their visibility.
+        for bars in catalog:
+            if bars["period"] == "tick" or bars["id"] == item["id"] or bars["code"] != item["code"] or bars["storage"] != item["storage"] or not bars["rows"]:
+                continue
+            native_worker(dict(action="export", files=bars["files"], period=bars["period"],
+                exchange=bars["exchange"], ticker=bars["ticker"], start=0, end=end,
+                destination=str(Path(taskfolder)/"market-data")))
     base = Path(taskfolder)/"market-base"
     base.mkdir(exist_ok=True)
     frozen = {}

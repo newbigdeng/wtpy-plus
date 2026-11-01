@@ -1,8 +1,27 @@
 import json
+import re
 import yaml
 import chardet
 
 from .ProductMgr import ProductMgr, ProductInfo
+
+COMMODITY_EXCHANGES = ("SHFE", "INE", "DCE", "CZCE", "GFEX")
+COMMODITY_OPTION = re.compile(r"([A-Za-z]{1,3})(\d{3,4})(-?)([CP])\3(\d+(?:\.\d+)?)")
+
+
+def commodity_option_code(exchange, ticker, expiry=None):
+    match = COMMODITY_OPTION.fullmatch(ticker)
+    if exchange not in COMMODITY_EXCHANGES or not match:
+        return None
+    product, month, _, side, strike = match.groups()
+    if exchange == "CZCE" and len(month) == 3:
+        # A January underlying can expire the year after the option.
+        year = int(expiry or 0) // 10000
+        if not year:
+            return None
+        month = str(((year + 1 - int(month[0])) // 10) % 10) + month
+    return f"{exchange}.{product}{month}.{side}.{strike}"
+
 
 class ContractInfo:
 
@@ -30,6 +49,7 @@ class ContractMgr:
 
     def __init__(self, prodMgr:ProductMgr = None):
         self.__contracts__ = dict()
+        self._option_aliases = {}
         self.__underlyings__ = dict()   # 期权专用
         self.__products__ = dict()   # 期权专用
         self.__prod_mgr__ = prodMgr
@@ -112,6 +132,13 @@ class ContractMgr:
                     cInfo.strikePrice = float(oObj["strikeprice"])
                     cInfo.underlyingScale = float(oObj["underlyingscale"])
 
+                if cInfo.isOption:
+                    canonical = commodity_option_code(exchg, code, cObj.get("expiredate"))
+                    if canonical and canonical != cInfo.stdCode:
+                        self._option_aliases[cInfo.stdCode] = canonical
+                        cInfo.stdCode = canonical
+                        if "product" in cObj:
+                            self.__products__[stdPID][-1] = canonical
                 self.__contracts__[cInfo.stdCode] = cInfo
                 if cInfo.isOption:
                     stdUnderlying = f"{exchg}.{cInfo.underlying}"
@@ -125,6 +152,7 @@ class ContractMgr:
         获取合约信息
         @stdCode    合约代码，格式如SHFE.rb.2305
         '''
+        stdCode = self._option_aliases.get(stdCode, stdCode)
         if stdCode not in self.__contracts__:
             return None
             

@@ -69,8 +69,8 @@ class ProductMgr:
 
     def getProductInfo(self, pid:str) -> ProductInfo:
         #pid形式可能为SHFE.ag.HOT，或者SHFE.ag.1912，或者SHFE.ag
-        items = pid.split(".")
-        key = items[0] + "." + items[1]
+        from .CodeHelper import CodeHelper
+        key = CodeHelper.stdCodeToStdCommID(pid)
         if key not in self.__products__:
             return None
 

@@ -19,7 +19,7 @@ def normalize_strategy_type(value):
         raise ValueError("策略类型仅支持 CTA、HFT、SEL；当前没有 UFT Python Mocker")
     return value
 
-def strategy_template(strategy_type):
+def strategy_template(strategy_type, default_code="SHFE.rb.2701"):
     kind = normalize_strategy_type(strategy_type)
     base = STRATEGY_TYPES[kind]["base_class"]
     header = f'''"""{kind.upper()}策略框架：业务回调为空，不会自动产生订单。
@@ -30,7 +30,7 @@ from wtpy import {base}
 
 
 class MyStrategy({base}):
-    def __init__(self, name, code="SHFE.rb.2701", period="m1"):
+    def __init__(self, name, code="{default_code}", period="m1"):
         super().__init__(name)
         self.code = code
         self.period = period

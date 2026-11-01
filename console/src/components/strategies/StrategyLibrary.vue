@@ -1,6 +1,6 @@
 <template>
  <section class="strategy-library" v-loading="loading">
-  <header><div><h1>策略管理</h1><p>在这里维护 Python 策略。组合和研究使用固定版本的副本。</p></div><div class="library-actions"><el-button @click="load">刷新</el-button><el-button @click="chooseResearch">从已有研究复制</el-button><el-button @click="create">新建策略</el-button><el-button type="primary" @click="chooseFile">导入 .py</el-button><input ref="file" type="file" accept=".py,text/x-python" hidden @change="importFile"/></div></header>
+  <header><div><h1>策略管理</h1><p>在这里维护 Python 策略。组合和研究使用固定版本的副本。</p></div><div class="library-actions"><el-button @click="load">刷新</el-button><el-button v-if="asset==='futures'" @click="chooseResearch">从已有研究复制</el-button><el-button @click="create">新建策略</el-button><el-button type="primary" @click="chooseFile">导入 .py</el-button><input ref="file" type="file" accept=".py,text/x-python" hidden @change="importFile"/></div></header>
   <div class="library-filter"><el-radio-group v-model="kind"><el-radio-button value="">全部</el-radio-button><el-radio-button v-for="item in ['CTA','HFT','SEL']" :key="item" :value="item">{{item}}</el-radio-button></el-radio-group><el-input v-model="search" placeholder="搜索名称、ID 或策略类" clearable aria-label="搜索策略库"/><span>{{filtered.length}} 个策略</span></div>
   <el-alert v-if="!canManage" type="info" :closable="false" title="游客可以查看策略目录，不能读取源码或修改策略。"/>
   <el-table :data="filtered" stripe empty-text="策略库为空。管理员可导入 Python 文件或创建策略框架。" @row-dblclick="open">
@@ -30,12 +30,13 @@ export default {
  name:'StrategyLibrary',components:{CodeEditor},
  data:()=>({editorLoading:false,editorError:'',editorRequest:0,strategies:[],loading:false,saving:false,kind:'',search:'',showEditor:false,showCreate:false,createKind:'CTA',draft:blank(),showResearch:false,researches:[],researchId:'',researchLibraryId:''}),
  computed:{
+  asset(){return ['stock','option','crypto'].includes(this.$route.query.asset)?this.$route.query.asset:'futures'},
   canManage(){return ['admin','superman'].includes(useSessionStore().cache.userinfo?.role)},
   filtered(){const query=this.search.trim().toLowerCase();return this.strategies.filter(row=>(!this.kind||row.engine_type===this.kind)&&(!query||[row.id,row.name,row.class_name,row.description].join(' ').toLowerCase().includes(query)))},
   editorOptions(){return {mode:'python',indentUnit:4,readOnly:!this.canManage,extraKeys:{'Ctrl-S':()=>this.save()}}}
  },
  methods:{
-  async request(path,body={}){const response=await fetch('/mgr/'+path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const result=await response.json();if(!response.ok||result.result<0)throw new Error(result.message||'策略库请求失败');return result},
+  async request(path,body={}){const response=await fetch((this.asset==='futures'?'/mgr/':'/mgr/assets/'+this.asset+'/')+path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const result=await response.json();if(!response.ok||result.result<0)throw new Error(result.message||'策略库请求失败');return result},
   permit(){if(!this.canManage){this.$message.warning('游客模式不支持操作');return false}return true},
   async load(){this.loading=true;try{this.strategies=(await this.request('strategy_library')).strategies||[]}catch(error){this.$message.error(error.message)}finally{this.loading=false}},
   chooseFile(){if(this.permit()){this.editorError='';this.$refs.file.click()}},
