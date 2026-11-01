@@ -27,6 +27,9 @@ class Plan(BaseModel):
     strategy: str = ""
     dataset: str = ""
     model: str = "bars"
+    fill_model: str = "causal_touch"
+    event_delay: int = Field(0, ge=0)
+    participation_rate: float = Field(0, ge=0, le=1)
     margin: float = Field(0.12, gt=0, le=1)
     version: int | None = None
     capital: float = Field(100000, gt=0, le=1e12, allow_inf_nan=False)
@@ -134,6 +137,11 @@ def register_main(app, deploy, authorize, libraries):
                 asset != "option" or not plan.dataset or plan.preview
             ):
                 raise ValueError("请选择期权工作区的真实 Tick 数据集")
+            if plan.model == "option_tick":
+                from ..wrapper.WtBtWrapper import validate_cta_fill_config
+                if plan.fill_model not in ("causal_touch", "volume_limited"):
+                    raise ValueError("真实期权 Tick 需要盘口撮合")
+                validate_cta_fill_config(plan.fill_model, plan.event_delay, plan.participation_rate)
             if plan.model == "plus_tick":
                 if asset != "futures" or plan.preview:
                     raise ValueError("Plus 主力 Tick 适用于期货 CTA")

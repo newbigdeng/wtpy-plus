@@ -70,5 +70,13 @@ class OptionAnalyticsTests(unittest.TestCase):
             self.assertEqual(read_option_frame(root,session,mode="simulation")["trading_day"],"20261030")
             with self.assertRaises(ValueError):read_option_frame(root,session,mode="session")
             self.assertIn("reason",desk.snapshot(quotes,session,now+61)["rows"][0])
+            # A fresh arrival must not revive stale exchange timestamps in session mode.
+            live = OptionDesk(dict(plan, mode="session"))
+            from datetime import datetime
+            from wtpy.monitor.OptionDesk import CN
+            origin = datetime(2026, 10, 30, 11, tzinfo=CN).timestamp()
+            for tick in quotes.values(): tick["received"] = origin + 90
+            self.assertIn("reason", live.snapshot(quotes, session, origin + 90)["rows"][0])
+            for tick in quotes.values(): tick["received"] = now
             quotes[row["symbol"]]["bid"]=115
             self.assertNotIn("iv",desk.snapshot(quotes,session,now)["rows"][0])

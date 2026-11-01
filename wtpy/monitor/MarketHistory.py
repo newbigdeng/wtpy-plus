@@ -43,13 +43,18 @@ def number(day):
     return int(day.strftime("%Y%m%d"))
 
 
+HISTORICAL_CALENDAR = json.loads((Path(__file__).parent / "calendars/cn-futures-history.json").read_text(encoding="utf8"))
+NO_NIGHT = set(CALENDAR["no_night"]) | set(HISTORICAL_CALENDAR["no_night"])
+
+
 def open_day(day):
     value = number(day)
     if day.weekday() >= 5:
         return False
-    if not CALENDAR["coverage_start"] <= value <= CALENDAR["coverage_end"]:
-        return None
-    return not any(start <= value <= end for start, end in CALENDAR["closed_ranges"])
+    for cal in (CALENDAR, HISTORICAL_CALENDAR):
+        if cal["coverage_start"] <= value <= cal["coverage_end"]:
+            return not any(start <= value <= end for start, end in cal["closed_ranges"])
+    return None
 
 
 def expected_stamps(day, session, period):
@@ -74,7 +79,7 @@ def expected_stamps(day, session, period):
     for section in sections:
         begin, end = section["from"], section["to"]
         night = is_night(section)
-        if night and number(previous) in CALENDAR["no_night"]:
+        if night and number(previous) in NO_NIGHT:
             continue
         base = previous if night else day
         if night and begin < 1800:

@@ -118,7 +118,7 @@ def public_quote(exchange,raw,end=None):
         if x.get("UpdateDate") and clock and (x["UpdateDate"]!=day or "08:00"<=clock<"18:00"):
             dt=datetime.fromisoformat(x["UpdateDate"]+" "+clock).replace(tzinfo=CN)
             if dt<=datetime.now(CN):stamp=dt.isoformat(timespec="seconds")
-        fields={"last":"LastPrice","bid":"BidPrice1","ask":"AskPrice1","prev_close":"PreClosePrice",
+        fields={"close":"ClosePrice","last":"LastPrice","bid":"BidPrice1","ask":"AskPrice1","prev_close":"PreClosePrice",
                 "prev_settle":"PreSettlementPrice","open":"OpenPrice","high":"HighestPrice","low":"LowestPrice",
                 "bid_size":"BidVolume1","ask_size":"AskVolume1","oi":"OpenInterest","volume":"Volume","amount":"Turnover"}
         values={k:finite(x.get(f),price=k not in ("bid_size","ask_size","oi","volume","amount")) for k,f in fields.items()}

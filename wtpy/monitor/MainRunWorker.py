@@ -110,7 +110,9 @@ def run(folder, task):
         )
         engine.commitBTConfig()
         engine.set_cta_strategy(
-            strategy, fill_model="causal_touch" if option_tick else "legacy_cta"
+            strategy, fill_model=task.get("fill_model", "causal_touch") if option_tick else "legacy_cta",
+            event_delay=task.get("event_delay", 0) if option_tick else 0,
+            participation_rate=task.get("participation_rate", 0) if option_tick else 0,
         )
         engine.run_backtest()
         if strategy.errors:
@@ -124,7 +126,7 @@ def run(folder, task):
         task.update(
             calculations=strategy.counts["on_calculate"],
             future_bars=strategy.future_bars,
-            model="期权实录 Tick · causal_touch" if option_tick else "WT CTA 闭合 K 线",
+            model="期权实录 Tick · " + task.get("fill_model", "causal_touch") if option_tick else "WT CTA 闭合 K 线",
         )
     finally:
         engine.release_backtest()

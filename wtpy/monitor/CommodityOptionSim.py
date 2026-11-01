@@ -81,6 +81,7 @@ def main():
         params["codes"] = codes
     if args.hedge_underlyings:
         params["underlyings"] = hedges
+    check_frame = None
     if args.analysis_session:
         from .OptionFrames import read_option_frame
         def check_frame():
@@ -156,9 +157,8 @@ def main():
                 context = engine.add_cta_strategy(strategy)
             else:
                 context = engine.add_hft_strategy(strategy,"option_sim")
-            if args.analysis_session:
-                from .OptionFrames import guard_option_orders
-                guard_option_orders(context,kind,check_frame,set(codes+hedges))
+            from .OptionFrames import guard_option_orders
+            guard_option_orders(context,kind,check_frame,set(codes+hedges))
             stopped = Event()
             handlers = {sig: signal.signal(sig, lambda *_: stopped.set()) for sig in (signal.SIGINT, signal.SIGTERM)}
             try:

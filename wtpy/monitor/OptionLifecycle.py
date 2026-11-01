@@ -88,7 +88,7 @@ class Lifecycle:
         rows = self.query("InvestorPosition")
 
         def count(ticker, d):
-            return sum(r["Position"] for r in rows if r["InstrumentID"] == ticker and r["PosiDirection"] == d)
+            return sum(r["Position"] for r in rows if r["InstrumentID"] == ticker and r["PosiDirection"] == d and r["HedgeFlag"] == "1")
 
         option, future = c["InstrumentID"], c["UnderlyingInstrID"]
         return dict(
@@ -96,9 +96,9 @@ class Lifecycle:
             short=count(option, "3"),
             future_net=count(future, "2") - count(future, "3"),
             frozen_long=sum(
-                max(r["StrikeFrozen"], 0) + max(r["ShortFrozen"], 0) + max(r["LongFrozen"], 0)
+                max(r["StrikeFrozen"], 0) + max(r["AbandonFrozen"], 0) + max(r["ShortFrozen"], 0)
                 for r in rows
-                if r["InstrumentID"] == option and r["PosiDirection"] == "2"
+                if r["InstrumentID"] == option and r["PosiDirection"] == "2" and r["HedgeFlag"] == "1"
             ),
         )
 
@@ -257,12 +257,12 @@ class Lifecycle:
         result["complete"] = result["matched"] and result["paired"] == qty and not result["residual_long"]
         return result
 
-    def future_ask(self, c):
+    def future_book(self, c):
         from .OptionBuyerSim import Quote
 
         feed = Quote(c["UnderlyingInstrID"])
         try:
-            return feed.book(self.desk.login["TradingDay"])[1]
+            return feed.book(self.desk.login["TradingDay"])[:2]
         finally:
             feed.api.Release()
 
@@ -273,9 +273,13 @@ class Lifecycle:
         if self.desk.login["TradingDay"] > c["ExpireDate"]:
             raise ValueError("已过到期日")
         required = None
+        shortfall = 0
         if not abandon:
             # Use the higher of the strike and observed future as a conservative notional.
-            price = max(c["StrikePrice"], self.future_ask(c))
+            bid, ask = self.future_book(c)
+            price = max(c["StrikePrice"], ask)
+            gap = c["StrikePrice"] - bid if c["OptionsType"] == "1" else ask - c["StrikePrice"]
+            shortfall = max(0, gap) * c["VolumeMultiple"] * qty
             (rate,) = self.query(
                 "InstrumentMarginRate", ExchangeID="DCE", InstrumentID=c["UnderlyingInstrID"], HedgeFlag="1"
             )
@@ -289,14 +293,14 @@ class Lifecycle:
                 )
                 * qty
             )
-            if required >= min(positive(budget), self.available()):
-                raise ValueError("行权后期货保证金超过预算或可用资金")
+            if required + shortfall >= min(positive(budget), self.available()):
+                raise ValueError("行权保证金与虚值差额超过预算或可用资金")
         self.journal(
             "before",
             dict(symbol="DCE." + c["InstrumentID"], position=before, day=self.desk.login["TradingDay"]),
         )
         if not apply:
-            return dict(preview=True, position=before, estimated_future_margin=required)
+            return dict(preview=True, position=before, estimated_future_margin=required, estimated_otm_cash=shortfall)
         self.ref += 1
         ref = str(self.ref)
         args = dict(

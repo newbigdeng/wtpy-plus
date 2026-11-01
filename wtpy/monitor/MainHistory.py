@@ -146,20 +146,24 @@ def main_plan(daily, begin, end):
         if not eligible:
             raise ValueError(f"{prior} 缺少可决定 {day} 主力的有效持仓量")
         month = max(eligible)[2]
+        basis = {}
         if active and active != month:
             old = daily[active].get(prior)
             if not old:
                 raise ValueError(f"{prior} 缺少旧约同步收盘价")
-            factor *= old["close"] / daily[month][prior]["close"]
+            basis = dict(old_close=old["close"], new_close=daily[month][prior]["close"])
+            factor *= basis["old_close"] / basis["new_close"]
         if day not in daily[month]:
             raise ValueError(f"{day} 主力 {month} 缺少行情")
-        result.append(dict(day=day, prior=prior, month=month, factor=factor))
+        result.append(dict(day=day, prior=prior, month=month, factor=factor, **basis))
         active = month
     if not result:
         raise ValueError("区间内没有足够的主力历史")
     observed = {row["day"] for row in result}
     cursor = datetime.strptime(begin, "%Y%m%d").date()
     while cursor.strftime("%Y%m%d") <= end:
+        if open_day(cursor) is None:
+            raise ValueError(f"{cursor} 超出已安装的历史交易日历")
         if open_day(cursor) and cursor.strftime("%Y%m%d") not in observed:
             raise ValueError(f"{cursor} 是交易日，历史目录缺少可用行情")
         cursor += timedelta(days=1)
@@ -180,6 +184,7 @@ def segments(plan):
                     start=r["day"],
                     prior=r["prior"],
                     factor=r["factor"],
+                    **{k: r[k] for k in ("old_close", "new_close", "target_strike", "strike") if k in r},
                 )
             )
         groups[-1]["end"] = r["day"]

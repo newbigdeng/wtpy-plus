@@ -29,8 +29,8 @@ class OptionLifecycleTests(unittest.TestCase):
                         published=time.time(),
                         mode="simulation",
                         rows=[
-                            dict(symbol="A", iv=0.3, valid_until=time.time() + 10),
-                            dict(symbol="B", iv=0.3, valid_until=end),
+                            dict(symbol="A", iv=0.3, source_time="20261030 11:00:00.000", future_time="20261030 11:00:00.000", valid_until=time.time() + 10),
+                            dict(symbol="B", iv=0.3, source_time="20261030 11:00:00.000", future_time="20261030 11:00:00.000", valid_until=end),
                         ],
                     ),
                 )
@@ -54,6 +54,33 @@ class OptionLifecycleTests(unittest.TestCase):
             (folder / "frame").unlink()
             ctx.stra_buy("A")
             self.assertEqual(sent, ["A"])
+
+    def test_each_leg_is_fresh_but_the_spread_is_out_of_sync(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, session = Path(tmp), "a"*24
+            folder = root/"analysis"/session
+            folder.mkdir(parents=True)
+            rows = [dict(symbol=k, iv=.3, valid_until=time.time()+5, source_time=t, future_time=t)
+                    for k, t in (("A", "20261030 09:01:00.000"), ("B", "20261030 09:02:01.000"))]
+            publish_frame(folder, dict(mode="simulation", published=time.time(), rows=rows))
+            with self.assertRaisesRegex(ValueError, "组合各腿"):
+                read_option_frame(root, session, mode="simulation", symbols=["A","B"])
+
+    def test_cta_aliases_share_the_order_gate_and_allow_list(self):
+        sent = []
+        ctx = SimpleNamespace(stra_log_text=lambda _: None, stra_get_tdate=lambda: 20261102)
+        for name in ("enter_long", "enter_short", "exit_long", "exit_short", "set_position"):
+            method = lambda code, qty, n=name: sent.append((n, code, qty))
+            setattr(ctx, "stra_" + name, method)
+            setattr(ctx, name, method)
+        guard_option_orders(ctx, "CTA", lambda: {"trading_day":"20261030"}, {"A"})
+        ctx.enter_short("A", 1)
+        ctx.stra_enter_long("A", 1)
+        ctx.set_position("A", -1)
+        ctx.exit_long("other", 1)
+        ctx.exit_long("A", 1)
+        ctx.set_position("A", 0)
+        self.assertEqual(sent, [("exit_long", "A", 1), ("set_position", "A", 0)])
 
     def test_partial_ioc_never_creates_an_unprotected_short(self):
         calls = []
@@ -100,7 +127,12 @@ class OptionLifecycleTests(unittest.TestCase):
         )
         svc.submit = Mock()
         svc.wait = Mock(return_value={"ExecResult": td.THOST_FTDC_OER_NoExec})
-        with patch.object(svc, "future_ask", return_value=102):
+        with patch.object(svc, "future_book", return_value=(85, 86)):
+            # Future margin is 100. A call at strike 100 also needs 150 for the gap.
+            with self.assertRaisesRegex(ValueError, "虚值差额"):
+                svc.declaration(c, 1, False, False, 200)
+            self.assertEqual(svc.declaration(c, 1, False, False, 300)["estimated_otm_cash"], 150)
+        with patch.object(svc, "future_book", return_value=(101, 102)):
             with self.assertRaises(ValueError):
                 svc.declaration(c, 2, False, True, 200)
             with self.assertRaises(ValueError):

@@ -18,27 +18,6 @@ from .MarketSubscriptions import _load
 from .PlusBacktest import write_json
 
 
-def option_terms(root, exchange):
-    terms = {}
-    for file in sorted((root / "history/native").glob("*/common/contracts.json")) + [
-        root / "common/contracts.json"
-    ]:
-        if not file.is_file():
-            continue
-        for raw, item in _load(file).get(exchange, {}).items():
-            m = OPTION.fullmatch(raw)
-            if not m:
-                continue
-            terms[raw] = dict(
-                terms.get(raw, {}),
-                underlying=exchange + "." + m[1] + m[2],
-                strike=float(m[5]),
-                side="看涨" if m[4] == "C" else "看跌",
-                expiry=item.get("expiredate"),
-            )
-    return terms
-
-
 def listed_options(root, ex, product, day, exact=None):
     """A dated directory is cached separately from today's executable base files."""
     from urllib.request import urlopen
@@ -46,7 +25,13 @@ def listed_options(root, ex, product, day, exact=None):
 
     cache = inside(root, "history", "main-cache")
     cache.mkdir(parents=True, exist_ok=True)
-    file = inside(cache, f"{ex}-{exact or product}-{day}.json")
+    ids = exact.split(",") if exact else []
+    # A bounded batch may include expired contracts missing from a product search.
+    if len(ids) > 1:
+        label = f"{ids[0]}_to_{ids[-1]}"
+    else:
+        label = exact or product
+    file = inside(cache, f"{ex}-{label}-{day}.json")
     if file.exists():
         return json.loads(file.read_bytes())
     stamp = datetime.strptime(day, "%Y%m%d").date().isoformat()
@@ -71,6 +56,7 @@ def listed_options(root, ex, product, day, exact=None):
         m = OPTION.fullmatch(raw)
         if (
             not m
+            or (ids and raw not in ids)
             or m[1] != product
             or item.get("ExchangeID") != ex
             or not item.get("OpenDate")
@@ -89,6 +75,17 @@ def listed_options(root, ex, product, day, exact=None):
     return result
 
 
+def meal_strike_batches(month, side, target):
+    """DCE meal strikes lie on a 25-yuan grid. Confirm each candidate with the dated catalogue."""
+    step = 25
+    center = int(target // step) * step
+    # Include finer grid points too; an unlisted strike never reaches the strategy.
+    points = sorted(range(max(step, center - 1500), center + 1525, step),
+                    key=lambda k: (abs(k - target), k))
+    for start in range(0, len(points), 8):
+        yield ",".join(f"{month}-{side}-{k}" for k in points[start:start + 8])
+
+
 def option_day(root, ex, raw, start, end, expiry, required):
     from .OptionWatchArchive import database, read, put
     from .OptionWatch import provider_future
@@ -99,9 +96,11 @@ def option_day(root, ex, raw, start, end, expiry, required):
     local = local_bars(root, ex, raw, "d", start, end)
     with closing(database(root, ex, raw)) as db:
         for r in read(db, "d", end.isoformat(), 800):
-            local.setdefault(r["day"].replace("-", ""), r)
+            key = r["day"].replace("-", "")
+            if r.get("volume", 0) > 0 and not local.get(key, {}).get("volume"):
+                local[key] = r
     m = OPTION.fullmatch(raw)
-    missing = any(k not in local for k in required if not expiry or k <= str(expiry))
+    missing = any(not local.get(k, {}).get("volume") for k in required if not expiry or k <= str(expiry))
     if missing:
         # Resolve CZCE's decade using the selected historical window.
         month = provider_future(ex, m[1] + m[2], expiry or end.strftime("%Y%m%d"))
@@ -111,7 +110,7 @@ def option_day(root, ex, raw, start, end, expiry, required):
             if not start.strftime("%Y%m%d") <= k <= end.strftime("%Y%m%d"):
                 continue
             nums = [float(r[x]) for x in ("o", "h", "l", "c", "v")]
-            if valid_bar(*nums) and nums[-1] > 0 and k not in local:
+            if valid_bar(*nums) and nums[-1] > 0 and not local.get(k, {}).get("volume"):
                 local[k] = dict(
                     zip(("open", "high", "low", "close", "volume"), nums),
                     day=r["d"],
@@ -138,7 +137,7 @@ def prepare(folder, root, task):
     ex, product = product_key(task["product"])
     start, end = range_dates(task["start"], task["end"])
     data, plan = product_history(root, task["product"], task["start"], task["end"])
-    terms = option_terms(root, ex) if task["asset"] == "option" else {}
+    terms = {}
     raw_future = lambda m: product + (m[1:] if ex == "CZCE" else m)
     optional = task["asset"] == "option"
     old_raw = None
@@ -160,47 +159,93 @@ def prepare(folder, root, task):
             )
         return daily[raw]
 
+    def require_option_day(raw, day):
+        from .OptionBars import public_quote, valid_bar
+        from .OptionWatchArchive import database, put
+        from contextlib import closing
+
+        prices = option_prices(raw)
+        if prices.get(day, {}).get("volume", 0) > 0:
+            return
+        iso = datetime.strptime(day, "%Y%m%d").date().isoformat()
+        try:
+            quote = public_quote(ex, raw, iso)
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"{day} {raw} 缺少可成交日线，补充行情不可用：{exc}") from exc
+        if quote and quote.get("volume") == 0:
+            raise ValueError(f"{day} {raw} 历史快照成交量为零；不以结算价代替成交")
+        values = [quote.get(k) for k in ("open", "high", "low", "close", "volume")] if quote else []
+        if not values or None in values or not valid_bar(*values) or values[-1] <= 0:
+            raise ValueError(f"{day} {raw} 缺少带成交量的完整日线")
+        prices[day] = dict(zip(("open", "high", "low", "close", "volume"), values),
+                           day=iso, source="OpenCTP 历史日行情")
+        with closing(database(root, ex, raw)) as db:
+            put(db, "d", [prices[day]])
+
+    def successor(month, prior, day, listed):
+        old = terms[old_raw]
+        new_f = data[month][prior]["close"]
+        old_f = data[old_month][prior]["close"]
+        target = old["strike"] / old_f * new_f
+        if (ex, product) == ("DCE", "m"):
+            side = "C" if old["side"] == "看涨" else "P"
+            batches = (listed_options(root, ex, product, prior, keys)
+                       for keys in meal_strike_batches(raw_future(month), side, target))
+        else:
+            batches = (listed,)
+        chosen = None
+        for batch in batches:
+            candidates = [dict(t, raw=k) for k, t in batch.items()
+                          if t["underlying"] == ex + "." + raw_future(month)
+                          and t["side"] == old["side"] and t["expiry"] > day]
+            if not candidates:
+                continue
+            terms.update(batch)
+            matches = ranked_successors(old["strike"], old_f, new_f, candidates)
+            chosen = next((t for t in matches if
+                           option_prices(t["raw"]).get(prior, {}).get("volume", 0) > 0), None)
+            if chosen:
+                break
+        return chosen, target
+
     for row in plan:
         month = row["month"]
         prior = row["prior"]
-        if optional and (
-            old_raw is None
-            or month != old_month
-            or str(terms[old_raw].get("expiry") or "") <= row["day"]
-        ):
-            try:
-                terms.update(listed_options(root, ex, product, prior))
-            except (OSError, ValueError):
-                if not terms:
-                    raise
+        if optional:
+            row.pop("old_close", None)
+            row.pop("new_close", None)
+            if old_raw is None or month > old_month or str(terms[old_raw]["expiry"]) <= row["day"]:
+                # Today's roster must never fill omissions in a historical directory.
+                listed = ({} if (ex, product) == ("DCE", "m")
+                          else listed_options(root, ex, product, prior))
+                terms.update(listed)
+        chosen = None
         if optional and old_month:
             month = max(old_month, month)
             if (
                 month == old_month
                 and str(terms[old_raw].get("expiry") or "") <= row["day"]
             ):
-                later = [
-                    (v[prior].get("oi", 0), m)
-                    for m, v in data.items()
-                    if m > month
-                    and prior in v
-                    and any(
-                        t.get("underlying") == ex + "." + raw_future(m)
-                        and str(t.get("expiry") or "") > row["day"]
-                        for t in terms.values()
-                    )
-                ]
-                if not later:
-                    raise ValueError("到期前没有可用的新月份")
-                month = max(later)[1]
+                later = sorted(((v[prior]["oi"], v[prior]["volume"], m)
+                                for m, v in data.items() if m > month and v.get(prior, {}).get("oi", 0) > 0),
+                               reverse=True)
+                for _, _, candidate in later:
+                    chosen, target = successor(candidate, prior, row["day"], listed)
+                    if chosen:
+                        month = candidate
+                        break
+                else:
+                    raise ValueError(f"{prior} 到期移仓缺少已挂牌且有成交的新月份")
         row["month"] = month
         raw = raw_future(month)
         if optional:
             if old_raw is None:
                 raw = task["option"].partition(".")[2]
-                if raw not in terms:
-                    terms.update(listed_options(root, ex, product, prior, raw))
-                chosen = terms.get(raw, {})
+                if raw not in listed:
+                    listed.update(listed_options(root, ex, product, prior, raw))
+                if raw not in listed:
+                    raise ValueError("起始期权不在决策日的挂牌目录")
+                chosen = terms[raw] = listed[raw]
                 if (
                     chosen.get("opened", prior) > prior
                     or not option_prices(raw).get(prior, {}).get("volume", 0) > 0
@@ -211,38 +256,23 @@ def prepare(folder, root, task):
             elif month == old_month:
                 raw = old_raw
             else:
-                old = terms[old_raw]
-                new_f = data[month][prior]["close"]
-                matches = ranked_successors(
-                    old["strike"],
-                    data[old_month][prior]["close"],
-                    new_f,
-                    [
-                        dict(t, raw=k)
-                        for k, t in terms.items()
-                        if t.get("underlying") == ex + "." + raw
-                        and t.get("side") == old["side"]
-                        and str(t.get("expiry") or "") > row["day"]
-                    ],
-                )
-                chosen = next(
-                    (
-                        t
-                        for t in matches
-                        if t.get("opened", prior) <= prior
-                        and option_prices(t["raw"]).get(prior, {}).get("volume", 0) > 0
-                    ),
-                    None,
-                )
+                if chosen is None:
+                    chosen, target = successor(month, prior, row["day"], listed)
                 if chosen is None:
                     raise ValueError("缺少切换前已经有真实成交的同方向期权")
                 raw = chosen["raw"]
                 old_c = option_prices(old_raw).get(prior, {}).get("close")
                 if not old_c:
                     raise ValueError("缺少旧期权换月前的收盘价")
-                factor *= old_c / option_prices(raw)[prior]["close"]
+                row.update(old_close=old_c, new_close=option_prices(raw)[prior]["close"],
+                           target_strike=target, strike=chosen["strike"])
+                factor *= old_c / row["new_close"]
             if str(terms[raw].get("expiry") or "") <= row["day"]:
                 raise ValueError("期权已到期；请使用到期清算或缩短区间")
+        if optional:
+            require_option_day(raw, row["day"])
+            if old_raw and raw != old_raw:
+                require_option_day(old_raw, row["day"])
         prices = option_prices(raw) if optional else data[month]
         if not prices.get(row["day"], {}).get("volume", 0) > 0:
             raise ValueError(f"{row['day']} {raw} 缺少有效成交 K 线")
@@ -377,15 +407,16 @@ def prepare(folder, root, task):
         if task.get("model") == "plus_tick":
             continue
         if minute:
-            a = start - timedelta(days=6)
+            a = datetime.strptime(min(required), "%Y%m%d").date() - timedelta(days=7)
+            finish = datetime.strptime(max(required), "%Y%m%d").date()
             native = dict(tick_minutes.get(raw, {}))
-            native.update(local_bars(root, ex, raw, "m1", a, end))
+            native.update(local_bars(root, ex, raw, "m1", a, finish))
             if optional:
                 from .OptionWatchArchive import database, read
                 from contextlib import closing
 
                 with closing(database(root, ex, raw)) as db:
-                    for x in read(db, "m1", end.isoformat(), 250000):
+                    for x in read(db, "m1", finish.isoformat(), 250000):
                         k = x["day"].replace("-", "").replace(":", "").replace(" ", "")
                         if len(k) == 12 and k[:8] >= a.strftime("%Y%m%d"):
                             native.setdefault(k, dict(x, day=x.get("trading_day")))
@@ -402,7 +433,7 @@ def prepare(folder, root, task):
                         output[k] = dict(r, day=day)
                 return output
 
-            native5 = labeled(local_bars(root, ex, raw, "m5", a, end))
+            native5 = labeled(local_bars(root, ex, raw, "m5", a, finish))
             session = _load(common / "sessions.json").get(prod["session"], {})
             expected = set()
             for day in required:
@@ -425,7 +456,7 @@ def prepare(folder, root, task):
             bars = (
                 native
                 if has_full
-                else fetch(root, ex + "." + raw, a, end, True, native)
+                else fetch(root, ex + "." + raw, a, finish, True, native)
             )
             full = five(labeled(bars), native5)
             missing = required - {r["day"] for r in full.values()}

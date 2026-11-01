@@ -33,26 +33,43 @@ def read_option_frame(option_root, session, *, mode, max_age=10, symbols=()):
               isfinite(r.get("iv") or 0) and (r.get("iv") or 0)>0 and r.get("valid_until",0)>=now}
     if set(symbols)-usable:
         raise ValueError("缺少有效盘口或 IV：" + ", ".join(sorted(set(symbols)-usable)))
+    if len(set(symbols)) > 1:
+        from .OptionDesk import BOOK_AGE, stamp
+        requested = set(symbols)
+        clocks = [stamp({"time": r.get(k, "")}) for r in value["rows"] if r["symbol"] in requested
+                  for k in ("source_time", "future_time")]
+        if (max(clocks) - min(clocks)).total_seconds() > BOOK_AGE:
+            raise ValueError("组合各腿不是同一时间窗口的盘口")
     return value
 
 
 def guard_option_orders(context, kind, check_frame, allowed):
     """Recheck before strategy orders. Explicit CTA exits and cancellations stay available."""
     from functools import wraps
-    methods = ('stra_buy','stra_sell') if kind=='HFT' else ('stra_enter_long','stra_enter_short','stra_set_position')
-    def guarded(method):
+    methods = ('stra_buy','stra_sell') if kind=='HFT' else (
+        'stra_enter_long','stra_enter_short','stra_exit_long','stra_exit_short','stra_set_position'
+    )
+    def guarded(name, method):
         @wraps(method)
         def submit(stdCode, *args, **kwargs):
             try:
                 if stdCode not in allowed:
                     raise ValueError("合约未列入期权运行计划")
-                flatten = method.__name__=='stra_set_position' and (args[0] if args else kwargs.get('qty'))==0
-                if not flatten:
-                    check_frame()
+                exit_only = name in ('stra_exit_long', 'stra_exit_short') or (
+                    name == 'stra_set_position' and (args[0] if args else kwargs.get('qty')) == 0
+                )
+                if check_frame and not exit_only:
+                    frame = check_frame()
+                    if kind == 'CTA' and str(context.stra_get_tdate()) != str(frame["trading_day"]):
+                        raise ValueError("分析会话与策略交易日不一致")
             except (OSError,ValueError) as exc:
                 context.stra_log_text("期权分析门控拒绝委托：" + str(exc))
                 return [] if kind=='HFT' else None
             return method(stdCode,*args,**kwargs)
         return submit
     for name in methods:
-        setattr(context,name,guarded(getattr(context,name)))
+        wrapper = guarded(name, getattr(context, name))
+        setattr(context, name, wrapper)
+        alias = name.removeprefix('stra_')
+        if hasattr(context, alias):
+            setattr(context, alias, wrapper)

@@ -3,10 +3,12 @@ from collections import defaultdict, deque
 from datetime import datetime
 from statistics import mean, pstdev
 import time
+from zoneinfo import ZoneInfo
 
 from .OptionModels import contract_metrics, kirk_price, qdate, smile_summary, variance_surface
 
 BOOK_AGE = 60
+CN = ZoneInfo("Asia/Shanghai")
 
 
 def midpoint(tick):
@@ -54,7 +56,14 @@ class OptionDesk:
             try:
                 if day != quote["trading_day"] or day != future["trading_day"]:
                     raise ValueError("等待同一交易日的报价")
-                if now-min(quote["received"],future["received"])>BOOK_AGE or abs((stamp(quote)-stamp(future)).total_seconds())>BOOK_AGE:
+                times = [stamp(t) for t in (quote, future)]
+                until = min(t["received"] for t in (quote, future)) + BOOK_AGE
+                if plan["mode"] == "session":
+                    source = [t.replace(tzinfo=CN).timestamp() for t in times]
+                    until = min(until, min(source) + BOOK_AGE)
+                    if max(source) > now + 2:
+                        raise ValueError("交易所报价时间晚于当前时钟")
+                if now > until or (max(times)-min(times)).total_seconds() > BOOK_AGE:
                     raise ValueError("报价超时或期权与期货不同步")
                 mid, fwd = midpoint(quote), midpoint(future)
                 today = qdate(day)
@@ -66,7 +75,7 @@ class OptionDesk:
                     self.cache[row["symbol"]] = (cache_key,metrics)
                 row.update(self.cache[row["symbol"]][1], forward=fwd, premium=mid,
                            bid=quote["bid"],ask=quote["ask"],source_time=quote["time"],future_time=future["time"],
-                           valid_until=min(quote["received"],future["received"])+BOOK_AGE)
+                           valid_until=until)
                 groups[row["underlying"]].append(row)
             except (RuntimeError,ValueError,OverflowError) as exc:
                 row["reason"] = str(exc) if isinstance(exc,ValueError) else "报价无法在模型波动率区间内定价"
