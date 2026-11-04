@@ -66,6 +66,8 @@ superman、trader、researcher、risker；回测、研究与终端页面仅对 r
 - 委托、成交、持仓与快照时间；柜台断开或数据过期时明确标注未知。
 - 风险告警与静默；策略暂停决策与原生过滤分别操作。
 
+![监控工作台（合成数据演示）](images/monitor-dark.png)
+
 **调度中心（`/schedule`）**
 - 进程启停、定时任务、进程守护与配置对比。
 - 数据中台订阅切换：期货、商品期权、加密货币分别维护订阅清单与存储目录。
@@ -83,11 +85,15 @@ superman、trader、researcher、risker；回测、研究与终端页面仅对 r
 - 托管启动计划：草稿、应用、手动启动三步分离；改动有持仓策略的代码或参数会被拒绝。
 - 从库删除只归档，已有计划仍能读取原版本。
 
+![策略库（合成数据演示）](images/strategy-library.png)
+
 **历史数据（`/history`）**
 - 按资产、合约和类型浏览 Tick、1 分钟、5 分钟与日线文件及其覆盖范围。
 - 补数入口按资产提供：期货 AkShare / Tushare / CNEquity，股票 Tushare / 腾讯 / 东方财富，
   商品期权新浪 / 信易 EDB / Tushare / 东方财富，加密货币 Coinbase / Binance。
 - `BackfillServer.py` 可独立部署为补数服务，只向各资产历史目录写入。
+
+![历史数据管理（合成数据演示）](images/history-data.png)
 
 **风控库（`/risk-library`）**
 - 规则类型包括单次增仓、目标仓位、可用资金、当日亏损和权益回撤。
@@ -110,12 +116,38 @@ superman、trader、researcher、risker；回测、研究与终端页面仅对 r
 - 流程画布：把公开数据、收益与风险分析步骤串成可复用工作流。
 - 前端通过 `TerminalRoutes.py` 认证转发到独立回环服务，后端位于 `scripts/research-terminal/`。
 
-**多资产与期权**
+**多资产**
 - 股票、期货、商品期权和加密货币各有独立的工作目录、采集进程与历史数据入口。
-- 商品期权：合约链浏览、波动率曲面、五项敏感度、跨品种价差；日 K 与分钟看盘、历史估值库。
-- 期权回测（历史回放口径）：多腿、跨到期移仓、行权与指派清算、行权后期货持仓盯市。
-- 期权模拟可对接 CTP 仿真柜台，以独立进程完成买方开平与逐笔对账，不影响期货采集与交易进程。
 - 游客可只读访问监控与公开页面，不能启停进程、运行回测或修改配置。
+
+**期权计算与交易**
+- 定价与风险：`OptionModels.py` 基于 QuantLib 计算理论价、Greeks、波动率微笑和方差曲面，
+  `kirk_price` 用于跨品种价差估值。
+- 期权链：`OptionChain.py` 导入公开合约目录；`OptionDesk.py` 只组合显式请求的 CTP 盘口，
+  按到期日生成期权链；`OptionDeskWorker.py` 为每个可见选择启动一个定价 worker 和一条 CTP 会话。
+- 看盘与归档：`OptionWatch.py` 提供只读合约搜索与单合约日线；`OptionWatchArchive.py`
+  按合约保存盘口与估值观测，原生采集文件保持只读。
+- 仿真交易引擎：`CommodityOptionSim.py` 用固定版本的 WT 策略在独立工作区运行；
+  `OptionSimCounter.py` 用同步请求/应答对接 SimNow 期权交易与查询；
+  `OptionBuyerSim.py` 做一手买方诊断并以交易所账本为准；`OptionLifecycle.py` 覆盖 DCE 垂直价差、
+  行权申报与结算；`OptionLedger.py` 对账委托、成交与资金。
+- 回测与清算：期权回测按历史回放口径处理多腿组合、跨到期移仓、行权与指派清算，
+  以及行权后期货持仓的逐日盯市；`OptionExpiryReplay.py` 按交易日维护 DCE 豆粕期权的交割与行权账本
+  （不连接柜台）；`OptionExpiryHistory.py`、`OptionExpiryRoutes.py` 提供历史到期数据与接口；
+  `OptionReplayRisk.py` 用回放自身的冻结行情与原生成交计算分钟级暴露。
+- C++ 期权策略工厂：`OptionFactory.py` 加载已安装的 C++ CTA 工厂，对冻结的期权历史运行原生回测。
+- 期权进程与期货采集/交易分开运行，互不影响。
+
+```mermaid
+flowchart LR
+    A[期权页选合约] --> B[OptionDesk 定价 worker]
+    B --> C[CTP 盘口订阅]
+    B --> D[QuantLib 估值 / Greeks]
+    A --> E[仿真交易 OptionSimCounter]
+    E --> F[SimNow 柜台]
+    F --> G[委托 / 成交 / 持仓回执]
+    G --> H[OptionLedger 对账]
+```
 
 **接口手册（`/api-manual`）**：策略回调与上下文接口说明，含 CTA 下单、数据查询与回测设置。
 
@@ -126,6 +158,8 @@ superman、trader、researcher、risker；回测、研究与终端页面仅对 r
 - 依赖由 `requirements-plus.lock` 固定：FastAPI 0.143.2、Uvicorn 0.54.0、Starlette 1.8.0、
   pandas 2.3.3、numpy 2.5.4、psutil 7.2.2、pytest 9.1.1 等；约束见 `requirements-plus.in`。
 - 数值与数据处理：numpy、pandas、XlsxWriter；网络与解析：httpx、websockets、pyquery、chardet。
+- 期权分析依赖 QuantLib；镜像构建参数 `WITH_CTP_QUOTES=1` 会安装 QuantLib 1.39 与 openctp-ctp 6.7.11.0，
+  用于期权定价、Greeks 与仿真柜台连接。
 - 包名仍为 `wtpy`，版本 0.9.9.3，导入路径 `import wtpy` 不变。
 
 **前端**
