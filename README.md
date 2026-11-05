@@ -109,6 +109,28 @@ superman、trader、researcher、risker；回测、研究与终端页面仅对 r
 - 自动化研究记录每个步骤、工具调用、读取的 Skill 与产出。
 - 因子版本与组合研究分别保存，进入交易前仍走原生回测与人工确认。
 
+**因子研究工具链**
+- 资料与假设：`ResearchSources.py`、`ResearchSourceSummary.py` 管理研报、论文与博客的入库和摘要；
+  `ResearchMethodSkills.py` 只在冻结复现通过后发布方法 Skill。
+- 因子定义：`FactorFormula.py` 是只处理闭栏 K 线的安全表达式解释器，不执行输入里的 Python、不允许 import；
+  `ResearchFactors.py` 提供版本化且白名单化的内置因子。
+- 因子计算：按闭栏时间计算因子面板，使用数据快照与 as-of 语义（`data_snapshot`、`as_of`），
+  结果连同输入保存为 CSV/JSON 快照，再登记到研究空间。
+- 检验与诊断：`FactorValidation.py` 做时序稳定性与分块随机化 rank IC 检验；
+  `ResearchDiagnostics.py` 提供秩相关、分组、分位与稳定性工具；`FactorCharts.vue`
+  展示 IC 时序、IC 分布、综合统计和信号净值曲线。
+- 自动化研究：`ResearchFactorAutomation.py` 从研报与方法论出发生成并复核候选因子；
+  `ResearchAutomationStatus.py` 记录步骤、工具调用与产出；`ResearchPortfolio.py` 是多因子趋势研究的任务队列。
+- 工作流与版本：`ResearchWorkflow.py` 在冻结的因子输入上迭代；`ResearchCodeVersions.py`
+  保存不可变研究副本，只有发布才生成新的策略库 ID。
+- 标签与切分：`ResearchValidationMethods.py` 用前向标签的 purged split 验证切分边界，
+  检查未来数据扰动不会改变保留的训练样本。
+- 原生复核：候选因子进入组合或策略库前先跑一次 Plus 原生回放，核对成交、费用与资金；
+  研究诊断与 WT 盈亏分开记录，不互相替代。
+- 研究环境可选外部工具：Great Expectations（数据质量）、RD-Agent + Optuna（假设生成与参数搜索）、
+  KunQuant + TA-Lib（批量计算与基线因子）、Alphalens（单因子初筛）、DSR/PBO（多重检验与过拟合校正）、
+  fincore（组合绩效与归因）、MLflow（实验追踪）。这些重依赖装在研究环境，不进入交易镜像的依赖锁。
+
 **分析终端（`/terminal`）**
 - 分析工具：DCF、现金流、组合优化、收益与风险指标。
 - 定价工具：期权、债券、远期、互换与日期计算，输出权利金与 Delta、Vega 等敏感度。
